@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./prohoripay.db"
 
     # Comma-separated list of allowed CORS origins.
-    cors_origins: str = "http://localhost:3000"
+    cors_origins: str = "http://localhost:3000,https://prohoripay-v1.vercel.app"
 
     @property
     def cors_origins_list(self) -> list[str]:
