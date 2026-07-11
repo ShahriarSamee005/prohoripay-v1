@@ -9,9 +9,21 @@ import type {
   TransactionsResponse,
   Provider,
 } from "./types";
+import {
+  getMockAgent,
+  getMockPools,
+  getMockTransactions,
+} from "./mock";
 
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+
+/**
+ * Set NEXT_PUBLIC_USE_MOCK=true in .env.local to build against the mock adapter.
+ * Flip to false (or unset) once the backend Phase 1 is running.
+ */
+export const USE_MOCK =
+  process.env.NEXT_PUBLIC_USE_MOCK === "true";
 
 export class ApiError extends Error {
   constructor(
@@ -32,7 +44,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       headers: { Accept: "application/json" },
       ...init,
     });
-  } catch (cause) {
+  } catch {
     throw new ApiError(
       `Cannot reach backend at ${API_BASE_URL}${path}`,
     );
@@ -49,20 +61,23 @@ export function getHealth(): Promise<Health> {
 }
 
 /** GET /api/agent (Phase 1) */
-export function getAgent(): Promise<Agent> {
+export async function getAgent(): Promise<Agent> {
+  if (USE_MOCK) return getMockAgent();
   return request<Agent>("/api/agent");
 }
 
 /** GET /api/pools (Phase 1) */
-export function getPools(): Promise<PoolsResponse> {
+export async function getPools(): Promise<PoolsResponse> {
+  if (USE_MOCK) return getMockPools();
   return request<PoolsResponse>("/api/pools");
 }
 
 /** GET /api/transactions (Phase 1) */
-export function getTransactions(params?: {
+export async function getTransactions(params?: {
   limit?: number;
   provider?: Provider;
 }): Promise<TransactionsResponse> {
+  if (USE_MOCK) return getMockTransactions(params);
   const search = new URLSearchParams();
   if (params?.limit != null) search.set("limit", String(params.limit));
   if (params?.provider) search.set("provider", params.provider);

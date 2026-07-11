@@ -13,7 +13,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.db import init_db
+
+# Import models so their tables register on SQLModel.metadata before init_db().
+from app.core import models  # noqa: F401
+from app.modules.agent.router import router as agent_router
 from app.modules.health.router import router as health_router
+from app.modules.pools.router import router as pools_router
+from app.modules.transactions.router import router as transactions_router
 
 
 @asynccontextmanager
@@ -35,3 +41,6 @@ app.add_middleware(
 
 # Module routers.
 app.include_router(health_router)
+app.include_router(agent_router)
+app.include_router(pools_router)
+app.include_router(transactions_router)
