@@ -1,0 +1,27 @@
+[project]
+name = "prohoripay-backend"
+version = "0.1.0"
+description = "ProhoriPay backend — advisory decision-support for multi-provider MFS super agents"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "sqlmodel>=0.0.16",
+    "pydantic-settings>=2.1",
+    "python-dotenv>=1.0",
+    # Reserved for later phases (installed now so no reinstall is needed):
+    "pandas>=2.1",
+    "numpy>=1.26",
+    "scikit-learn>=1.4",
+    "faker>=24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
