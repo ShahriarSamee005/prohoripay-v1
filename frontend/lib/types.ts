@@ -126,3 +126,53 @@ export interface ForecastsResponse {
   forecasts: Forecast[];
   meta: Meta;
 }
+
+// ─── Phase 3 — Anomaly + liquidity alerts ────────────────────────────────────
+// Base contract shape: id, type, severity, label, anomaly_type, provider,
+// pool_id, evidence, baseline, observed, confidence, ts, case_id.
+// Proposed extensions (confidence_factors, recommended_context) are noted —
+// the backend must match these fields or the mock adapter bridges the gap.
+
+export type AlertType = "liquidity" | "anomaly";
+export type AlertSeverity = "low" | "medium" | "high";
+export type AnomalyType =
+  | "structuring"
+  | "velocity_spike"
+  | "off_hours_burst"
+  | "balance_inconsistency";
+
+export interface Alert {
+  id: string;
+  type: AlertType;
+  severity: AlertSeverity;
+  label: string;
+  anomaly_type: AnomalyType | null;
+  provider: Provider | null;
+  pool_id: PoolId;
+  evidence: string[];
+  baseline: Record<string, number | string>;
+  observed: Record<string, number | string>;
+  confidence: number; // 0–1
+  ts: string; // ISO-8601 UTC
+  case_id: string | null;
+  // Proposed Phase 3 extension fields — not in base contract:
+  confidence_factors?: ConfidenceFactors;
+  recommended_context?: string;
+}
+
+/**
+ * Powers the false-positive proof. When a known event (e.g. Eid rush) explains
+ * high volume, this is non-null and the UI shows a calm informational chip.
+ * Language stays safe — never "fraud" or "suspicious".
+ */
+export interface AlertContext {
+  active_event: string | null;
+  note: string;
+}
+
+/** GET /api/alerts (Phase 3) */
+export interface AlertsResponse {
+  alerts: Alert[];
+  context: AlertContext | null;
+  meta: Meta;
+}

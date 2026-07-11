@@ -86,16 +86,29 @@ Every analytics-bearing response includes:
   "evidence": ["cash-out rate 2000/min over last 15m", "balance fell 30k→20k in 5m"] }
 ```
 
-### Phase 3 — Anomaly + evidence
-`GET /api/alerts` → `{ "alerts": [Alert, ...], "meta": Meta }`
+## Phase 3 endpoint (final) — Anomaly + liquidity alerts
+Alerts come from TWO deterministic sources (no LLM): liquidity alerts derived from Phase-2 forecasts
+(pool status critical/watch), and anomaly alerts from context-aware detection over transactions.
+`GET /api/alerts` → `{ "alerts": [Alert, ...], "context": Context | null, "meta": Meta }`
+Alerts are persisted with stable IDs (so Phase 4 can attach a case). Ordered by `ts` desc.
 ```json
-{ "id": "alert_0007", "type": "anomaly", "severity": "high",
-  "label": "unusual — requires review", "provider": "bkash", "pool_id": "bkash",
+{ "id": "alert_0007",
+  "type": "anomaly",                 // "liquidity" | "anomaly"
+  "severity": "high",                // "low" | "medium" | "high"
+  "label": "unusual — requires review",   // liquidity: "liquidity pressure — requires attention"
+  "anomaly_type": "structuring",     // null for liquidity; else structuring | velocity_spike |
+                                     //   off_hours_burst | balance_inconsistency (detector's guess)
+  "provider": "bkash",               // null allowed (e.g. physical_cash liquidity alert)
+  "pool_id": "bkash",
   "evidence": ["12 transactions of ~9,500 BDT", "from 3 accounts", "within 45 min"],
   "baseline": { "txn_per_min": 2 }, "observed": { "txn_per_min": 15 },
-  "confidence": 0.83, "ts": "2026-07-11T09:14:00Z", "case_id": "case_0003" }
+  "confidence": 0.83,
+  "ts": "2026-07-11T09:14:00Z",
+  "case_id": null }                  // null until Phase 4 creates a case
 ```
-`type`: `liquidity` | `anomaly`. Language stays safe ("unusual", "requires review").
+`Context` (optional, powers the false-positive proof): when a known event explains high volume,
+`{ "active_event": "eid_rush", "note": "high volume recognized as expected demand" }`. Language stays
+safe throughout — never "fraud"/"suspicious".
 
 ### Phase 4 — Coordination / case lifecycle
 `GET /api/cases`, `GET /api/cases/{id}`, and transition endpoints

@@ -17,6 +17,7 @@ from app.core.db import init_db
 # Import models so their tables register on SQLModel.metadata before init_db().
 from app.core import models  # noqa: F401
 from app.modules.agent.router import router as agent_router
+from app.modules.alerts.router import router as alerts_router
 from app.modules.forecast.router import router as forecast_router
 from app.modules.health.router import router as health_router
 from app.modules.pools.router import router as pools_router
@@ -25,8 +26,15 @@ from app.modules.transactions.router import router as transactions_router
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """Initialize the database schema on startup."""
+    """Initialize the schema and lazily populate alerts if data exists."""
     init_db()
+    from sqlmodel import Session
+
+    from app.core.db import engine
+    from app.modules.alerts.service import ensure_alerts
+
+    with Session(engine) as session:
+        ensure_alerts(session)
     yield
 
 
@@ -46,3 +54,4 @@ app.include_router(agent_router)
 app.include_router(pools_router)
 app.include_router(transactions_router)
 app.include_router(forecast_router)
+app.include_router(alerts_router)

@@ -4,6 +4,7 @@
 
 import type {
   Agent,
+  AlertsResponse,
   Health,
   PoolsResponse,
   TransactionsResponse,
@@ -12,6 +13,7 @@ import type {
 } from "./types";
 import {
   getMockAgent,
+  getMockAlerts,
   getMockPools,
   getMockTransactions,
   getMockForecasts,
@@ -78,6 +80,12 @@ export async function getPools(): Promise<PoolsResponse> {
 export async function getForecast(): Promise<ForecastsResponse> {
   if (USE_MOCK) return getMockForecasts();
   return request<ForecastsResponse>("/api/forecast");
+}
+
+/** GET /api/alerts (Phase 3) */
+export async function getAlerts(): Promise<AlertsResponse> {
+  if (USE_MOCK) return getMockAlerts();
+  return request<AlertsResponse>("/api/alerts");
 }
 
 /** GET /api/transactions (Phase 1) */

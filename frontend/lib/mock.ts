@@ -8,6 +8,9 @@
  */
 import type {
   Agent,
+  Alert,
+  AlertContext,
+  AlertsResponse,
   Pool,
   Transaction,
   PoolsResponse,
@@ -309,6 +312,101 @@ export const MOCK_FORECASTS: Forecast[] = [
     history: ROCKET_HISTORY,
   },
 ];
+
+// ─── Phase 3 mock alerts ─────────────────────────────────────────────────────
+// Mix: structuring anomaly (high, full evidence), velocity_spike (medium),
+// physical_cash liquidity alert (high). Context: Eid demand recognised as
+// expected — demonstrates false-positive suppression.
+
+export const MOCK_ALERTS: Alert[] = [
+  {
+    // Structuring: repeated amounts just below threshold from multiple accounts
+    id: "alert_0001",
+    type: "anomaly",
+    severity: "high",
+    label: "unusual — requires review",
+    anomaly_type: "structuring",
+    provider: "bkash",
+    pool_id: "bkash",
+    evidence: [
+      "12 transactions of ~9,500 BDT",
+      "From 3 accounts",
+      "Within 45 minutes",
+      "Amounts consistently near ৳10,000 threshold",
+      "Pattern not seen in 7-day baseline",
+    ],
+    baseline: { txn_per_min: 2, amount_avg: 5200 },
+    observed: { txn_per_min: 15, amount_avg: 9480 },
+    confidence: 0.83,
+    ts: "2026-07-11T09:14:00Z",
+    case_id: null,
+    confidence_factors: { volatility: 0.25, sample_size: 0.88, data_freshness: 0.97 },
+    recommended_context:
+      "Review the 12 transactions listed above. Check if these accounts are known to this agent. Consider escalating to a risk reviewer if the pattern repeats.",
+  },
+  {
+    // Velocity spike: sudden burst in Nagad transaction rate with no known event
+    id: "alert_0002",
+    type: "anomaly",
+    severity: "medium",
+    label: "unusual — requires review",
+    anomaly_type: "velocity_spike",
+    provider: "nagad",
+    pool_id: "nagad",
+    evidence: [
+      "Transaction rate spiked from 3/min to 22/min",
+      "18 unique accounts in 20 minutes",
+      "Unusual for this time of day",
+      "No known event flag for this window",
+    ],
+    baseline: { txn_per_min: 3, unique_accounts_per_20min: 5 },
+    observed: { txn_per_min: 22, unique_accounts_per_20min: 18 },
+    confidence: 0.71,
+    ts: "2026-07-11T09:08:00Z",
+    case_id: null,
+    confidence_factors: { volatility: 0.38, sample_size: 0.75, data_freshness: 0.92 },
+    recommended_context:
+      "Check whether a local event or Nagad promotion explains the sudden increase. If no event context, review the transaction origins.",
+  },
+  {
+    // Liquidity: physical cash critically low, derived from Phase-2 forecast
+    id: "alert_0003",
+    type: "liquidity",
+    severity: "high",
+    label: "liquidity pressure — requires attention",
+    anomaly_type: null,
+    provider: null,
+    pool_id: "physical_cash",
+    evidence: [
+      "Physical cash at ৳4,200 — below safe operating floor",
+      "Burn rate: 120 BDT/min (accelerating)",
+      "Projected depletion in ~18 minutes",
+      "Eid Rush event active — demand spike likely to continue",
+    ],
+    baseline: { balance_floor: 10000, burn_rate_per_min: 40 },
+    observed: { balance_current: 4200, burn_rate_per_min: 120 },
+    confidence: 0.88,
+    ts: "2026-07-11T09:00:00Z",
+    case_id: null,
+    confidence_factors: { volatility: 0.35, sample_size: 0.85, data_freshness: 0.95 },
+    recommended_context:
+      "Request physical cash top-up from the nearest distributor. Consider temporarily pausing cash-out services until replenished.",
+  },
+];
+
+/** Context proving false-positive control: Eid demand explains the volume spike */
+export const MOCK_ALERT_CONTEXT: AlertContext = {
+  active_event: "eid_rush",
+  note: "High volume recognized as Eid demand — treated as expected",
+};
+
+export function getMockAlerts(): AlertsResponse {
+  return {
+    alerts: MOCK_ALERTS,
+    context: MOCK_ALERT_CONTEXT,
+    meta: MOCK_META_OK,
+  };
+}
 
 export function getMockAgent(): Agent {
   return MOCK_AGENT;

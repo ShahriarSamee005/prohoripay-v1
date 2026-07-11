@@ -32,8 +32,13 @@ def seed_database(engine: Engine | None = None, *, reset: bool = True) -> dict:
         SQLModel.metadata.drop_all(engine)
     SQLModel.metadata.create_all(engine)
 
+    from app.modules.alerts.service import run_detection
+
     with Session(engine) as session:
-        return populate(session)
+        summary = populate(session)
+        detection = run_detection(session)
+    summary["alerts"] = detection
+    return summary
 
 
 def main() -> None:
@@ -48,6 +53,11 @@ def main() -> None:
             f"    {pool_id:<14} opening={info['opening']:>9,}  "
             f"current={info['current']:>9,}  status={info['status']}"
         )
+    alerts = summary.get("alerts", {})
+    print(f"  alerts:       {alerts.get('total', 0)} "
+          f"({alerts.get('anomaly', 0)} anomaly, {alerts.get('liquidity', 0)} liquidity)")
+    if alerts.get("by_type"):
+        print(f"    anomaly types: {alerts['by_type']}")
 
 
 if __name__ == "__main__":

@@ -71,3 +71,30 @@ class Transaction(SQLModel, table=True):
     # --- Server-side-only ground truth. NEVER returned by any API. ---
     is_injected_anomaly: bool = Field(default=False, index=True)
     anomaly_type: str | None = None
+
+
+class Alert(SQLModel, table=True):
+    """A persisted alert (contract Phase 3). Anomaly or liquidity.
+
+    `covered_txn_ids` is a server-side detail (which transactions the detector's
+    evidence covers) used for precision/recall validation and Phase-4 case
+    linkage. It is NEVER included in the API response schema.
+    """
+
+    id: str = Field(primary_key=True)  # e.g. "alert_0007"
+    type: str                          # "liquidity" | "anomaly"
+    severity: str                      # "low" | "medium" | "high"
+    label: str
+    anomaly_type: str | None = None    # null for liquidity
+    provider: str | None = None        # null allowed (e.g. physical_cash)
+    pool_id: str
+    evidence: list[str] = Field(sa_column=Column(JSON))
+    baseline: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    observed: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    confidence: float
+    ts: datetime = Field(index=True)
+    case_id: str | None = None         # null until Phase 4 creates a case
+
+    # --- Server-side only. NEVER returned by any API. ---
+    covered_txn_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    active_event: str | None = None    # event that contextualized this alert, if any
