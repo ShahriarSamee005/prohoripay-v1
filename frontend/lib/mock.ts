@@ -18,6 +18,12 @@ import type {
   ForecastsResponse,
   Forecast,
   Meta,
+  Case,
+  CaseEvent,
+  CaseOwnerRole,
+  CaseStatus,
+  CasesResponse,
+  CaseActionBody,
 } from "./types";
 
 const MOCK_META_OK: Meta = {
@@ -339,7 +345,7 @@ export const MOCK_ALERTS: Alert[] = [
     observed: { txn_per_min: 15, amount_avg: 9480 },
     confidence: 0.83,
     ts: "2026-07-11T09:14:00Z",
-    case_id: null,
+    case_id: "case_0001",
     confidence_factors: { volatility: 0.25, sample_size: 0.88, data_freshness: 0.97 },
     recommended_context:
       "Review the 12 transactions listed above. Check if these accounts are known to this agent. Consider escalating to a risk reviewer if the pattern repeats.",
@@ -363,7 +369,7 @@ export const MOCK_ALERTS: Alert[] = [
     observed: { txn_per_min: 22, unique_accounts_per_20min: 18 },
     confidence: 0.71,
     ts: "2026-07-11T09:08:00Z",
-    case_id: null,
+    case_id: "case_0002",
     confidence_factors: { volatility: 0.38, sample_size: 0.75, data_freshness: 0.92 },
     recommended_context:
       "Check whether a local event or Nagad promotion explains the sudden increase. If no event context, review the transaction origins.",
@@ -387,12 +393,305 @@ export const MOCK_ALERTS: Alert[] = [
     observed: { balance_current: 4200, burn_rate_per_min: 120 },
     confidence: 0.88,
     ts: "2026-07-11T09:00:00Z",
-    case_id: null,
+    case_id: "case_0003",
     confidence_factors: { volatility: 0.35, sample_size: 0.85, data_freshness: 0.95 },
     recommended_context:
       "Request physical cash top-up from the nearest distributor. Consider temporarily pausing cash-out services until replenished.",
   },
+  {
+    // Off-hours burst: Rocket spike at 03:00 — reviewed and resolved
+    id: "alert_0004",
+    type: "anomaly",
+    severity: "low",
+    label: "unusual — requires review",
+    anomaly_type: "off_hours_burst",
+    provider: "rocket",
+    pool_id: "rocket",
+    evidence: [
+      "14 transactions between 03:00–04:00",
+      "No known event for this hour",
+      "Unusual for this day and time",
+      "Accounts linked to salary disbursement batch",
+    ],
+    baseline: { txn_per_min: 0.5 },
+    observed: { txn_per_min: 8 },
+    confidence: 0.61,
+    ts: "2026-07-11T07:00:00Z",
+    case_id: "case_0004",
+    confidence_factors: { volatility: 0.22, sample_size: 0.65, data_freshness: 0.88 },
+    recommended_context:
+      "Verify whether a scheduled salary batch explains the off-hours activity. If confirmed, no further action needed.",
+  },
 ];
+
+// ─── Phase 4 mock cases ───────────────────────────────────────────────────────
+// Four states: routed (demo target), acknowledged, escalated, resolved.
+
+const INITIAL_MOCK_CASES: Case[] = [
+  {
+    // case_0001: routed — primary Scenario D demo target
+    id: "case_0001",
+    alert_id: "alert_0001",
+    type: "anomaly",
+    provider: "bkash",
+    owner_role: "risk_reviewer",
+    status: "routed",
+    escalation_level: 0,
+    next_step: "Review repeated-amount cluster",
+    recommended_action:
+      "Review the 12 near-identical transfers with the agent before any action. Do not block or flag accounts without human review.",
+    opened_ts: "2026-07-11T09:14:00Z",
+    updated_ts: "2026-07-11T09:14:30Z",
+    sla_minutes: 30,
+    history: [
+      {
+        stage: "raised",
+        actor: "system",
+        ts: "2026-07-11T09:14:00Z",
+        detail: "auto-created from alert_0001",
+      },
+      {
+        stage: "routed",
+        actor: "system",
+        ts: "2026-07-11T09:14:30Z",
+        detail: "routed to risk_reviewer",
+      },
+    ],
+  },
+  {
+    // case_0002: acknowledged — shows mid-lifecycle state
+    id: "case_0002",
+    alert_id: "alert_0002",
+    type: "anomaly",
+    provider: "nagad",
+    owner_role: "risk_reviewer",
+    status: "acknowledged",
+    escalation_level: 0,
+    next_step: "Verify transaction origins and check for known event context",
+    recommended_action:
+      "Check whether a local event or Nagad promotion explains the surge. If no explanation, review the transaction origins with the agent.",
+    opened_ts: "2026-07-11T09:08:00Z",
+    updated_ts: "2026-07-11T09:12:00Z",
+    sla_minutes: 30,
+    history: [
+      {
+        stage: "raised",
+        actor: "system",
+        ts: "2026-07-11T09:08:00Z",
+        detail: "auto-created from alert_0002",
+      },
+      {
+        stage: "routed",
+        actor: "system",
+        ts: "2026-07-11T09:08:20Z",
+        detail: "routed to risk_reviewer",
+      },
+      {
+        stage: "acknowledged",
+        actor: "risk_reviewer",
+        ts: "2026-07-11T09:12:00Z",
+        detail: "reviewing transaction origins now",
+      },
+    ],
+  },
+  {
+    // case_0003: escalated — liquidity case handed up to supervisor
+    id: "case_0003",
+    alert_id: "alert_0003",
+    type: "liquidity",
+    provider: null,
+    owner_role: "supervisor",
+    status: "escalated",
+    escalation_level: 1,
+    next_step: "Supervisor to coordinate physical cash replenishment",
+    recommended_action:
+      "Contact the nearest distributor for an emergency cash delivery. Consider advising the agent to pause cash-out services temporarily until replenished.",
+    opened_ts: "2026-07-11T09:00:00Z",
+    updated_ts: "2026-07-11T09:15:00Z",
+    sla_minutes: 30,
+    history: [
+      {
+        stage: "raised",
+        actor: "system",
+        ts: "2026-07-11T09:00:00Z",
+        detail: "auto-created from alert_0003",
+      },
+      {
+        stage: "routed",
+        actor: "system",
+        ts: "2026-07-11T09:00:10Z",
+        detail: "routed to field_officer",
+      },
+      {
+        stage: "acknowledged",
+        actor: "field_officer",
+        ts: "2026-07-11T09:05:00Z",
+        detail: "physical cash critically low — contacting distributor",
+      },
+      {
+        stage: "escalated",
+        actor: "field_officer",
+        ts: "2026-07-11T09:15:00Z",
+        detail: "no distributor reachable within SLA — escalated to supervisor",
+      },
+    ],
+  },
+  {
+    // case_0004: resolved — off-hours burst identified as salary batch
+    id: "case_0004",
+    alert_id: "alert_0004",
+    type: "anomaly",
+    provider: "rocket",
+    owner_role: "risk_reviewer",
+    status: "resolved",
+    escalation_level: 0,
+    next_step: "",
+    recommended_action: "No further action needed.",
+    opened_ts: "2026-07-11T07:00:00Z",
+    updated_ts: "2026-07-11T08:30:00Z",
+    sla_minutes: 30,
+    history: [
+      {
+        stage: "raised",
+        actor: "system",
+        ts: "2026-07-11T07:00:00Z",
+        detail: "auto-created from alert_0004",
+      },
+      {
+        stage: "routed",
+        actor: "system",
+        ts: "2026-07-11T07:00:20Z",
+        detail: "routed to risk_reviewer",
+      },
+      {
+        stage: "acknowledged",
+        actor: "risk_reviewer",
+        ts: "2026-07-11T07:15:00Z",
+        detail: "reviewing off-hours spike",
+      },
+      {
+        stage: "resolved",
+        actor: "risk_reviewer",
+        ts: "2026-07-11T08:30:00Z",
+        detail:
+          "reviewed — confirmed salary payment batch disbursement, no further review needed",
+      },
+    ],
+  },
+];
+
+// Mutable client-side store: mutations persist within a browser session.
+let CASE_STORE: Case[] = INITIAL_MOCK_CASES.map((c) => ({
+  ...c,
+  history: [...c.history],
+}));
+
+function nowTs(): string {
+  return new Date().toISOString().replace(".000Z", "Z");
+}
+
+function nextOwnerRole(role: CaseOwnerRole): CaseOwnerRole {
+  const ladder: CaseOwnerRole[] = [
+    "field_officer",
+    "risk_reviewer",
+    "supervisor",
+    "area_manager",
+  ];
+  const idx = ladder.indexOf(role);
+  return ladder[Math.min(idx + 1, ladder.length - 1)];
+}
+
+export function getMockCases(params?: {
+  status?: string;
+  provider?: string;
+}): CasesResponse {
+  let cases = CASE_STORE;
+  if (params?.status) cases = cases.filter((c) => c.status === params.status);
+  if (params?.provider)
+    cases = cases.filter((c) => c.provider === params.provider);
+  return {
+    cases: cases.map((c) => ({ ...c, history: [...c.history] })),
+    meta: MOCK_META_OK,
+  };
+}
+
+export function getMockCase(id: string): Case {
+  const c = CASE_STORE.find((c) => c.id === id);
+  if (!c) throw new Error(`Case ${id} not found`);
+  return { ...c, history: [...c.history] };
+}
+
+export function mockAckCase(id: string, body: CaseActionBody): Case {
+  const idx = CASE_STORE.findIndex((c) => c.id === id);
+  if (idx === -1) throw new Error("Case not found");
+  const c = CASE_STORE[idx];
+  if (c.status !== "routed")
+    throw new Error(
+      "This action is not available — case can only be acknowledged from routed status"
+    );
+  const ts = nowTs();
+  const newHistory: CaseEvent[] = [
+    ...c.history,
+    { stage: "acknowledged" as CaseStatus, actor: body.actor, ts, detail: body.note || "" },
+  ];
+  const updated: Case = {
+    ...c,
+    status: "acknowledged",
+    updated_ts: ts,
+    history: newHistory,
+  };
+  CASE_STORE[idx] = updated;
+  return { ...updated, history: [...updated.history] };
+}
+
+export function mockEscalateCase(id: string, body: CaseActionBody): Case {
+  const idx = CASE_STORE.findIndex((c) => c.id === id);
+  if (idx === -1) throw new Error("Case not found");
+  const c = CASE_STORE[idx];
+  if (c.status !== "acknowledged")
+    throw new Error(
+      "This action is not available — case can only be escalated from acknowledged status"
+    );
+  const ts = nowTs();
+  const newOwner = nextOwnerRole(c.owner_role);
+  const newHistory: CaseEvent[] = [
+    ...c.history,
+    { stage: "escalated" as CaseStatus, actor: body.actor, ts, detail: body.note || "" },
+  ];
+  const updated: Case = {
+    ...c,
+    status: "escalated",
+    owner_role: newOwner,
+    escalation_level: c.escalation_level + 1,
+    updated_ts: ts,
+    history: newHistory,
+  };
+  CASE_STORE[idx] = updated;
+  return { ...updated, history: [...updated.history] };
+}
+
+export function mockResolveCase(id: string, body: CaseActionBody): Case {
+  const idx = CASE_STORE.findIndex((c) => c.id === id);
+  if (idx === -1) throw new Error("Case not found");
+  const c = CASE_STORE[idx];
+  if (c.status !== "acknowledged" && c.status !== "escalated")
+    throw new Error(
+      "This action is not available — case must be acknowledged or escalated before resolving"
+    );
+  const ts = nowTs();
+  const newHistory: CaseEvent[] = [
+    ...c.history,
+    { stage: "resolved" as CaseStatus, actor: body.actor, ts, detail: body.note || "" },
+  ];
+  const updated: Case = {
+    ...c,
+    status: "resolved",
+    updated_ts: ts,
+    history: newHistory,
+  };
+  CASE_STORE[idx] = updated;
+  return { ...updated, history: [...updated.history] };
+}
 
 /** Context proving false-positive control: Eid demand explains the volume spike */
 export const MOCK_ALERT_CONTEXT: AlertContext = {

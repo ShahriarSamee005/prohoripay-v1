@@ -8,12 +8,13 @@ import type {
   AlertContext,
   AlertSeverity,
   AnomalyType,
+  Case,
 } from "@/lib/types";
+import { CasePanel } from "./case-panel";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmtTime(ts: string): string {
-  // Stable across SSR/client: extract from ISO string directly
   return ts.substring(11, 16) + " UTC";
 }
 
@@ -69,18 +70,15 @@ function severityStyle(s: AlertSeverity) {
     return {
       stripe: "var(--bv-danger)",
       textClass: "text-danger",
-      badgeColor: "var(--bv-danger)",
     };
   if (s === "medium")
     return {
       stripe: "var(--bv-warning)",
       textClass: "text-warning",
-      badgeColor: "var(--bv-warning)",
     };
   return {
     stripe: "var(--bv-info)",
     textClass: "text-info",
-    badgeColor: "var(--bv-info)",
   };
 }
 
@@ -95,6 +93,7 @@ const BANGLA: Record<string, string> = {
   alert_0001: "⚠️ bKash-এ অস্বাভাবিক লেনদেন ধরন — রিভিউ প্রয়োজন।",
   alert_0002: "⚠️ Nagad-এ লেনদেনের হার অস্বাভাবিক — পর্যালোচনা করুন।",
   alert_0003: "⚠️ ক্যাশ ড্রয়ারে অর্থ কম — দ্রুত ব্যবস্থা নিন।",
+  alert_0004: "⚠️ Rocket-এ রাতের অস্বাভাবিক লেনদেন — পর্যালোচনা সম্পন্ন।",
 };
 
 // ─── Baseline vs Observed comparison ─────────────────────────────────────────
@@ -188,13 +187,103 @@ function EidContextChip({ context }: { context: AlertContext }) {
   );
 }
 
+// ─── Active cases strip ───────────────────────────────────────────────────────
+
+const CASE_STATUS_COLOR: Record<string, string> = {
+  routed: "var(--bv-warning)",
+  acknowledged: "var(--bv-brand)",
+  escalated: "var(--bv-danger)",
+};
+
+const CASE_OWNER_LABELS: Record<string, string> = {
+  field_officer: "Field Officer",
+  risk_reviewer: "Risk Reviewer",
+  supervisor: "Supervisor",
+  area_manager: "Area Manager",
+};
+
+function ActiveCasesStrip({
+  cases,
+  alerts,
+  onOpenAlert,
+}: {
+  cases: Case[];
+  alerts: Alert[];
+  onOpenAlert: (alert: Alert) => void;
+}) {
+  const active = (cases ?? []).filter((c) => c.status !== "resolved");
+  if (active.length === 0) return null;
+
+  return (
+    <div className="bg-surface border border-default rounded-lg overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-default flex items-center justify-between gap-3">
+        <p className="text-label-sm text-secondary uppercase tracking-wide">
+          Active Cases
+        </p>
+        <span
+          className="px-2 py-0.5 rounded-pill text-label-sm text-on-brand tabular-nums-bv"
+          style={{ backgroundColor: "var(--bv-warning)" }}
+        >
+          {active.length}
+        </span>
+      </div>
+      <div className="divide-y divide-default">
+        {active.map((c) => {
+          const linkedAlert = alerts.find((a) => a.id === c.alert_id);
+          return (
+            <button
+              key={c.id}
+              onClick={() => linkedAlert && onOpenAlert(linkedAlert)}
+              className="w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-surface-high transition-colors text-left"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div
+                  className="size-2 rounded-pill shrink-0"
+                  style={{
+                    backgroundColor:
+                      CASE_STATUS_COLOR[c.status] ?? "var(--bv-text-tertiary)",
+                  }}
+                />
+                <div className="min-w-0">
+                  <p className="text-title-sm text-primary truncate">
+                    {CASE_OWNER_LABELS[c.owner_role] ?? c.owner_role}
+                  </p>
+                  <p className="text-body-sm text-tertiary">
+                    {c.provider ?? "Physical Cash"} · {c.id}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span
+                  className="px-2 py-0.5 rounded-pill text-label-sm"
+                  style={{
+                    backgroundColor:
+                      CASE_STATUS_COLOR[c.status] ?? "var(--bv-surface-high)",
+                    color:
+                      c.status in CASE_STATUS_COLOR ? "#fff" : "var(--bv-text-secondary)",
+                  }}
+                >
+                  {c.status}
+                </span>
+                <ChevronRight className="size-3.5 text-tertiary" />
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── Alert card ───────────────────────────────────────────────────────────────
 
 function AlertCard({
   alert,
+  hasCase,
   onOpen,
 }: {
   alert: Alert;
+  hasCase: boolean;
   onOpen: () => void;
 }) {
   const [lang, setLang] = useState<"en" | "bn">("en");
@@ -227,6 +316,11 @@ function AlertCard({
             {alert.anomaly_type && (
               <span className="px-2 py-0.5 rounded-sm bg-surface-high text-label-sm text-secondary">
                 {anomalyLabel(alert.anomaly_type)}
+              </span>
+            )}
+            {hasCase && (
+              <span className="px-2 py-0.5 rounded-sm bg-brand text-on-brand text-label-sm">
+                Case
               </span>
             )}
           </div>
@@ -321,10 +415,14 @@ function AlertCard({
 
 function AlertDetailDrawer({
   alert,
+  case_,
   onClose,
+  onCaseUpdate,
 }: {
   alert: Alert | null;
+  case_: Case | null;
   onClose: () => void;
+  onCaseUpdate: (updated: Case) => void;
 }) {
   return (
     <AnimatePresence>
@@ -462,23 +560,8 @@ function AlertDetailDrawer({
                 </div>
               )}
 
-              {/* Phase 4 coordination placeholder */}
-              <div className="rounded-lg p-4 space-y-2 border-2 border-dashed border-default">
-                <p className="text-label-sm text-tertiary uppercase tracking-wide">
-                  Coordination — Phase 4
-                </p>
-                <p className="text-body-sm text-tertiary">
-                  Owner assignment, acknowledgement, escalation, and resolution
-                  will be added here.
-                </p>
-                <p className="text-body-sm text-tertiary">
-                  <span className="text-secondary">Routing: </span>
-                  {alert.type === "liquidity"
-                    ? "Field Officer"
-                    : "Risk Reviewer"}{" "}
-                  → Supervisor
-                </p>
-              </div>
+              {/* Phase 4 coordination panel */}
+              <CasePanel case_={case_} onUpdate={onCaseUpdate} />
 
               <p className="text-body-sm text-tertiary text-center pb-2">
                 Advisory only · no action is taken automatically · a human decides
@@ -496,12 +579,32 @@ function AlertDetailDrawer({
 export function AlertFeed({
   alerts,
   context,
+  initialCases = [],
 }: {
   alerts: Alert[];
   context: AlertContext | null;
+  initialCases?: Case[];
 }) {
+  const [cases, setCases] = useState<Case[]>(initialCases);
   const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
+
   const sv = worstSeverity(alerts);
+
+  // The case linked to the currently open alert drawer
+  const selectedCase =
+    selectedAlert?.case_id
+      ? (cases.find((c) => c.id === selectedAlert.case_id) ?? null)
+      : null;
+
+  function handleCaseUpdate(updated: Case) {
+    setCases((prev) =>
+      prev.map((c) => (c.id === updated.id ? updated : c))
+    );
+  }
+
+  function handleOpenAlert(alert: Alert) {
+    setSelectedAlert(alert);
+  }
 
   return (
     <>
@@ -524,6 +627,13 @@ export function AlertFeed({
           )}
         </div>
 
+        {/* Active cases strip — resolved cases are excluded */}
+        <ActiveCasesStrip
+          cases={cases}
+          alerts={alerts}
+          onOpenAlert={handleOpenAlert}
+        />
+
         {/* Eid context chip — calm informational chip, different from alert cards */}
         {context?.active_event && <EidContextChip context={context} />}
 
@@ -538,7 +648,8 @@ export function AlertFeed({
               <AlertCard
                 key={alert.id}
                 alert={alert}
-                onOpen={() => setSelectedAlert(alert)}
+                hasCase={!!alert.case_id}
+                onOpen={() => handleOpenAlert(alert)}
               />
             ))}
           </div>
@@ -548,7 +659,9 @@ export function AlertFeed({
       {/* Detail drawer — layered above everything */}
       <AlertDetailDrawer
         alert={selectedAlert}
+        case_={selectedCase}
         onClose={() => setSelectedAlert(null)}
+        onCaseUpdate={handleCaseUpdate}
       />
     </>
   );

@@ -176,3 +176,58 @@ export interface AlertsResponse {
   context: AlertContext | null;
   meta: Meta;
 }
+
+// ─── Phase 4 — Case lifecycle ──────────────────────────────────────────────────
+
+export type CaseStatus =
+  | "raised"
+  | "routed"
+  | "acknowledged"
+  | "escalated"
+  | "resolved";
+
+export type CaseOwnerRole =
+  | "field_officer"
+  | "risk_reviewer"
+  | "supervisor"
+  | "area_manager";
+
+export interface CaseEvent {
+  stage: CaseStatus;
+  actor: string;
+  ts: string; // ISO-8601 UTC
+  detail: string;
+}
+
+/**
+ * A coordination case linked to an alert. Carries an immutable audit history.
+ * NOTHING here executes a financial action — it notifies, assigns, acknowledges,
+ * escalates, recommends, and tracks. Every transition is actor-attributed.
+ */
+export interface Case {
+  id: string;
+  alert_id: string;
+  type: AlertType;
+  provider: Provider | null;
+  owner_role: CaseOwnerRole;
+  status: CaseStatus;
+  escalation_level: number;
+  next_step: string;
+  recommended_action: string;
+  opened_ts: string;
+  updated_ts: string;
+  sla_minutes: number;
+  history: CaseEvent[];
+}
+
+/** GET /api/cases */
+export interface CasesResponse {
+  cases: Case[];
+  meta: Meta;
+}
+
+/** Body for POST /api/cases/{id}/ack|escalate|resolve */
+export interface CaseActionBody {
+  actor: string;
+  note: string;
+}

@@ -10,6 +10,9 @@ import type {
   TransactionsResponse,
   ForecastsResponse,
   Provider,
+  Case,
+  CasesResponse,
+  CaseActionBody,
 } from "./types";
 import {
   getMockAgent,
@@ -17,6 +20,11 @@ import {
   getMockPools,
   getMockTransactions,
   getMockForecasts,
+  getMockCases,
+  getMockCase,
+  mockAckCase,
+  mockEscalateCase,
+  mockResolveCase,
 } from "./mock";
 
 export const API_BASE_URL =
@@ -86,6 +94,64 @@ export async function getForecast(): Promise<ForecastsResponse> {
 export async function getAlerts(): Promise<AlertsResponse> {
   if (USE_MOCK) return getMockAlerts();
   return request<AlertsResponse>("/api/alerts");
+}
+
+/** GET /api/cases (Phase 4) */
+export async function getCases(params?: {
+  status?: string;
+  provider?: string;
+}): Promise<CasesResponse> {
+  if (USE_MOCK) return getMockCases(params);
+  const search = new URLSearchParams();
+  if (params?.status) search.set("status", params.status);
+  if (params?.provider) search.set("provider", params.provider);
+  const qs = search.toString();
+  return request<CasesResponse>(`/api/cases${qs ? `?${qs}` : ""}`);
+}
+
+/** GET /api/cases/{id} (Phase 4) */
+export async function getCase(id: string): Promise<Case> {
+  if (USE_MOCK) return getMockCase(id);
+  return request<Case>(`/api/cases/${id}`);
+}
+
+/** POST /api/cases/{id}/ack (Phase 4) */
+export async function ackCase(
+  id: string,
+  body: CaseActionBody
+): Promise<Case> {
+  if (USE_MOCK) return mockAckCase(id, body);
+  return request<Case>(`/api/cases/${id}/ack`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** POST /api/cases/{id}/escalate (Phase 4) */
+export async function escalateCase(
+  id: string,
+  body: CaseActionBody
+): Promise<Case> {
+  if (USE_MOCK) return mockEscalateCase(id, body);
+  return request<Case>(`/api/cases/${id}/escalate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+/** POST /api/cases/{id}/resolve (Phase 4) */
+export async function resolveCase(
+  id: string,
+  body: CaseActionBody
+): Promise<Case> {
+  if (USE_MOCK) return mockResolveCase(id, body);
+  return request<Case>(`/api/cases/${id}/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 /** GET /api/transactions (Phase 1) */

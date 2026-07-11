@@ -194,10 +194,24 @@ def run_detection(session: Session, data_freshness: float = 1.0,
     all_dicts = anomaly_dicts + liquidity_dicts
     all_dicts.sort(key=lambda a: a["ts"])  # stable ids in chronological order
 
-    # Persist (idempotent: replace).
+    # Persist (idempotent: replace). Cases + their audit trail are regenerated
+    # in lockstep with the alerts they mirror, so linkage stays consistent.
+    from app.modules.cases.models import Case, CaseEvent
+    from app.modules.cases.service import create_cases_for_alerts
+
+    session.exec(delete(CaseEvent))
+    session.exec(delete(Case))
     session.exec(delete(Alert))
+    session.flush()
+
+    persisted: list[Alert] = []
     for i, a in enumerate(all_dicts, start=1):
-        session.add(Alert(id=f"alert_{i:04d}", case_id=None, **a))
+        alert = Alert(id=f"alert_{i:04d}", case_id=None, **a)
+        session.add(alert)
+        persisted.append(alert)
+
+    # Auto-create + route one case per alert (sets each alert's case_id).
+    create_cases_for_alerts(session, persisted)
     session.commit()
 
     return {

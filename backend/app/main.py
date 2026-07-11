@@ -18,6 +18,7 @@ from app.core.db import init_db
 from app.core import models  # noqa: F401
 from app.modules.agent.router import router as agent_router
 from app.modules.alerts.router import router as alerts_router
+from app.modules.cases.router import router as cases_router
 from app.modules.forecast.router import router as forecast_router
 from app.modules.health.router import router as health_router
 from app.modules.pools.router import router as pools_router
@@ -55,3 +56,4 @@ app.include_router(pools_router)
 app.include_router(transactions_router)
 app.include_router(forecast_router)
 app.include_router(alerts_router)
+app.include_router(cases_router)

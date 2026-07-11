@@ -13,6 +13,7 @@ from sqlmodel import Session, SQLModel
 
 # Import models so their tables register on SQLModel.metadata before create_all.
 from app.core import models  # noqa: F401
+from app.modules.cases import models as _case_models  # noqa: F401
 from app.core.db import engine as default_engine
 from app.modules.synth.generator import populate
 

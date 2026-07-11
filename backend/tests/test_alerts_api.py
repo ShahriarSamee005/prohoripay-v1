@@ -30,7 +30,7 @@ def test_alerts_endpoint_shape(client):
         assert a["severity"] in {"low", "medium", "high"}
         assert 0.0 <= a["confidence"] <= 1.0
         assert isinstance(a["evidence"], list) and len(a["evidence"]) >= 1
-        assert a["case_id"] is None                      # null until Phase 4
+        assert isinstance(a["case_id"], str) and a["case_id"].startswith("case_")  # Phase 4
         if a["type"] == "liquidity":
             assert a["anomaly_type"] is None
             assert a["label"] == "liquidity pressure — requires attention"

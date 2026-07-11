@@ -110,17 +110,42 @@ Alerts are persisted with stable IDs (so Phase 4 can attach a case). Ordered by 
 `{ "active_event": "eid_rush", "note": "high volume recognized as expected demand" }`. Language stays
 safe throughout — never "fraud"/"suspicious".
 
-### Phase 4 — Coordination / case lifecycle
-`GET /api/cases`, `GET /api/cases/{id}`, and transition endpoints
-`POST /api/cases/{id}/ack | /escalate | /resolve`.
+## Phase 4 endpoint (final) — Coordination / case lifecycle
+When an alert is raised, a Case is auto-created and routed by type. Cases carry an immutable audit
+history and support human transitions. NOTHING here executes a financial action — it notifies,
+assigns, acknowledges, escalates, recommends, and tracks. Every transition is actor-attributed.
+
+Routing by alert type: `liquidity → field_officer`, `anomaly → risk_reviewer`; escalation raises to
+`supervisor` then `area_manager` (configurable ladder).
+
+`GET /api/cases?status=&provider=` → `{ "cases": [Case, ...], "meta": Meta }`
+`GET /api/cases/{id}` → `Case`
+`POST /api/cases/{id}/ack`      body `{ "actor": "field_officer", "note": "" }` → `Case`
+`POST /api/cases/{id}/escalate` body `{ "actor": "field_officer", "note": "" }` → `Case`
+`POST /api/cases/{id}/resolve`  body `{ "actor": "risk_reviewer", "note": "reviewed — salary payment" }` → `Case`
 ```json
-{ "id": "case_0003", "alert_id": "alert_0007", "provider": "bkash",
-  "owner_role": "risk_reviewer", "status": "acknowledged", "escalation_level": 1,
-  "next_step": "Review repeated-amount cluster", "opened_ts": "...",
-  "history": [ { "stage": "raised", "actor": "system", "ts": "...", "detail": "..." } ] }
+{ "id": "case_0003",
+  "alert_id": "alert_0007",
+  "type": "anomaly",                 // mirrors the alert type
+  "provider": "bkash",               // null allowed
+  "owner_role": "risk_reviewer",     // field_officer | risk_reviewer | supervisor | area_manager
+  "status": "acknowledged",          // raised | routed | acknowledged | escalated | resolved
+  "escalation_level": 0,             // 0 base; +1 per escalation up the ladder
+  "next_step": "Review repeated-amount cluster",
+  "recommended_action": "Review the 12 near-identical transfers with the agent before any action",
+  "opened_ts": "2026-07-11T09:14:00Z",
+  "updated_ts": "2026-07-11T09:20:00Z",
+  "sla_minutes": 30,                 // time budget before auto-escalation is due
+  "history": [                       // immutable, append-only audit trail
+    { "stage": "raised",        "actor": "system",        "ts": "...", "detail": "auto-created from alert_0007" },
+    { "stage": "routed",        "actor": "system",        "ts": "...", "detail": "routed to risk_reviewer" },
+    { "stage": "acknowledged",  "actor": "risk_reviewer", "ts": "...", "detail": "" }
+  ] }
 ```
-Routing: `liquidity → field_officer`, `anomaly → risk_reviewer`, `escalation → supervisor`.
-`status`: `raised` | `routed` | `acknowledged` | `escalated` | `resolved`.
+Transitions are guarded: illegal moves (e.g. resolve before ack, or acting on a resolved case) return
+`409` with a safe message. Valid transitions append a history entry and update status/owner. On the
+Alert, `case_id` is now populated. Auto-escalation is time-based (see Phase 5 clock); the fields
+(`sla_minutes`, `escalation_level`) are wired now and driven live in Phase 5.
 
 ### Phase 5 — Live flow (SSE) + demo controls
 `GET /api/stream` (SSE). Event `type`s: `balance_update` | `alert_new` | `case_update` | `feed_status`.

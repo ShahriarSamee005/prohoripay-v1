@@ -1,4 +1,4 @@
-import { getAgent, getAlerts, getPools, getForecast } from "@/lib/api";
+import { getAgent, getAlerts, getPools, getForecast, getCases } from "@/lib/api";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { HeroCard } from "@/components/hero-card";
 import { PoolBreakdown } from "@/components/pool-breakdown";
@@ -9,16 +9,19 @@ import { AlertFeed } from "@/components/alert-feed";
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const [agent, poolsResp, forecastsResp, alertsResp] = await Promise.all([
-    getAgent(),
-    getPools(),
-    getForecast().catch(() => null),
-    getAlerts().catch(() => null),
-  ]);
+  const [agent, poolsResp, forecastsResp, alertsResp, casesResp] =
+    await Promise.all([
+      getAgent(),
+      getPools(),
+      getForecast().catch(() => null),
+      getAlerts().catch(() => null),
+      getCases().catch(() => null),
+    ]);
   const { pools, meta } = poolsResp;
   const forecasts = forecastsResp?.forecasts ?? [];
   const alerts = alertsResp?.alerts ?? [];
   const alertContext = alertsResp?.context ?? null;
+  const initialCases = casesResp?.cases ?? [];
 
   return (
     <main className="min-h-dvh bg-background px-4 py-8 sm:py-12">
@@ -51,8 +54,12 @@ export default async function DashboardPage() {
         {/* Provider card row — statuses from /api/pools (forecast-driven) */}
         <ProviderCardRow pools={pools} />
 
-        {/* Alert feed — inside the dashboard, not a separate tab */}
-        <AlertFeed alerts={alerts} context={alertContext} />
+        {/* Alert feed with coordination cases — inside the dashboard */}
+        <AlertFeed
+          alerts={alerts}
+          context={alertContext}
+          initialCases={initialCases}
+        />
 
         <footer className="text-body-sm text-tertiary text-center pb-4">
           Advisory only · no financial decisions are made automatically
