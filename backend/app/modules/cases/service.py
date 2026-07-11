@@ -81,40 +81,48 @@ def history_of(session: Session, case_id: str) -> list[CaseEvent]:
 
 
 # --------------------------------------------------------------- auto-creation
+def create_case_for_alert(session: Session, alert: Alert, seq: int) -> Case:
+    """Create + route ONE case (id `case_{seq:04d}`) from an alert; link the alert.
+
+    The case is stored in status `routed` (raised -> routed), owned per `ROUTING`,
+    with two system audit entries appended. Caller commits.
+    """
+    case_id = f"case_{seq:04d}"
+    owner = ROUTING[alert.type]
+    case = Case(
+        id=case_id,
+        alert_id=alert.id,
+        type=alert.type,
+        provider=alert.provider,
+        owner_role=owner,
+        status="routed",
+        escalation_level=0,
+        next_step=build_next_step(alert),
+        recommended_action=build_recommended_action(alert),
+        opened_ts=alert.ts,
+        updated_ts=alert.ts,
+        sla_minutes=SLA_MINUTES[alert.type],
+    )
+    session.add(case)
+    _append_event(session, case_id, "raised", "system", alert.ts,
+                  f"auto-created from {alert.id}")
+    _append_event(session, case_id, "routed", "system", alert.ts,
+                  f"routed to {owner}")
+    alert.case_id = case_id
+    session.add(alert)
+    return case
+
+
 def create_cases_for_alerts(session: Session, alerts: list[Alert]) -> list[Case]:
     """Create + route one case per alert; set each alert's `case_id`.
 
-    On creation the case moves raised -> routed: two system audit entries are
-    appended and the case is stored in status `routed`, owned per `ROUTING`.
-    Caller commits.
+    Sequential ids `case_0001..` in alert-id order. Used by the full-replace
+    `run_detection`; the sim uses `create_case_for_alert` with continuing ids.
     """
-    cases: list[Case] = []
-    for i, alert in enumerate(sorted(alerts, key=lambda a: a.id), start=1):
-        case_id = f"case_{i:04d}"
-        owner = ROUTING[alert.type]
-        case = Case(
-            id=case_id,
-            alert_id=alert.id,
-            type=alert.type,
-            provider=alert.provider,
-            owner_role=owner,
-            status="routed",
-            escalation_level=0,
-            next_step=build_next_step(alert),
-            recommended_action=build_recommended_action(alert),
-            opened_ts=alert.ts,
-            updated_ts=alert.ts,
-            sla_minutes=SLA_MINUTES[alert.type],
-        )
-        session.add(case)
-        _append_event(session, case_id, "raised", "system", alert.ts,
-                      f"auto-created from {alert.id}")
-        _append_event(session, case_id, "routed", "system", alert.ts,
-                      f"routed to {owner}")
-        alert.case_id = case_id
-        session.add(alert)
-        cases.append(case)
-    return cases
+    return [
+        create_case_for_alert(session, alert, i)
+        for i, alert in enumerate(sorted(alerts, key=lambda a: a.id), start=1)
+    ]
 
 
 # --------------------------------------------------------------- state machine
@@ -162,6 +170,23 @@ def transition(
     session.add(case)
     session.commit()
     session.refresh(case)
+    return case
+
+
+def system_close(session: Session, case: Case, now: datetime, detail: str) -> Case:
+    """Auto-resolve a case as a SYSTEM action (e.g. liquidity pressure eased).
+
+    Distinct from the human `resolve` transition: it does not require a prior ack,
+    because it records an automatically-detected condition clearing, not a person's
+    decision. Still advisory — it only annotates and closes the tracking record.
+    Appends a system audit entry; no-op if already resolved.
+    """
+    if case.status == "resolved":
+        return case
+    case.status = "resolved"
+    case.updated_ts = now
+    _append_event(session, case.id, "resolved", "system", now, detail)
+    session.add(case)
     return case
 
 

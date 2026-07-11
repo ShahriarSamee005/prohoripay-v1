@@ -44,6 +44,8 @@ class ForecastOut(BaseModel):
     # --- additive fields (Phase 2) ---
     status: str
     trend: str
+    # at_floor | insufficient_data | intermittent | filling | projected
+    projection_state: str
     confidence_factors: ConfidenceFactors
     history: list[HistoryPoint]
 

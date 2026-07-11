@@ -18,9 +18,14 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Groq is used only for natural-language explanations in a later phase.
-    # Placeholder here so the value is wired now; unused in Phase 0.
+    # Groq is used ONLY to translate finished structured results into natural
+    # language (Phase 6). It never calculates, detects, scores, or decides.
     groq_api_key: str = ""
+    # Verify the exact model name on the Groq dashboard (models change over time).
+    groq_model: str = "llama-3.3-70b-versatile"
+    # Keep the demo snappy: a short timeout and a single retry, else fall back.
+    groq_timeout_seconds: float = 8.0
+    groq_max_retries: int = 1
 
     # SQLite for the prototype.
     database_url: str = "sqlite:///./prohoripay.db"

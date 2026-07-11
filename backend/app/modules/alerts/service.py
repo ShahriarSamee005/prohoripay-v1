@@ -134,10 +134,14 @@ def _finding_confidence(f: Finding, bump: float, data_freshness: float,
     return round(max(0.0, min(0.98, conf)), 2)
 
 
-def _forecast_liquidity_alerts(session, data_freshness, anchor):
-    """Build liquidity alerts from Phase-2 forecasts (status critical/watch)."""
+def _forecast_liquidity_alerts(session, freshness_by_pool, anchor):
+    """Build liquidity alerts from Phase-2 forecasts (status critical/watch).
+
+    `freshness_by_pool` lets a broken feed (Phase 5) degrade only its own pool's
+    forecast confidence, which flows straight into the liquidity alert.
+    """
     alerts: list[dict] = []
-    for fc in compute_forecasts(session, data_freshness=data_freshness):
+    for fc in compute_forecasts(session, freshness_by_pool=freshness_by_pool):
         if fc.status not in LIQUIDITY_ALERT_STATUSES:
             continue
         provider = None if fc.pool_id == PoolId.physical_cash.value else fc.pool_id
@@ -157,9 +161,19 @@ def _forecast_liquidity_alerts(session, data_freshness, anchor):
 
 
 # ------------------------------------------------------------------- public API
-def run_detection(session: Session, data_freshness: float = 1.0,
-                  cfg: DetectorConfig = DEFAULT_DETECTOR_CONFIG) -> dict:
-    """(Re)compute all alerts over the seeded history + current forecasts, persist."""
+def compute_alert_dicts(
+    session: Session,
+    freshness_by_pool: dict[str, float] | None = None,
+    cfg: DetectorConfig = DEFAULT_DETECTOR_CONFIG,
+) -> list[dict]:
+    """Compute all current alert dicts (anomaly + liquidity), WITHOUT persisting.
+
+    Pure-ish read over the current transactions/pools/forecasts. `freshness_by_pool`
+    (Phase 5) degrades a broken feed's pool confidence; any pool not listed uses
+    1.0. Shared by the full-replace `run_detection` and the sim's incremental path.
+    Returned dicts are sorted by `ts` ascending.
+    """
+    fb = freshness_by_pool or {}
     txns = _load_txn_records(session)
     net, anchor = _net_by_pool(session)
     pools = [
@@ -180,7 +194,7 @@ def run_detection(session: Session, data_freshness: float = 1.0,
 
     anomaly_dicts: list[dict] = []
     for i, f in enumerate(findings):
-        conf = _finding_confidence(f, bumps.get(i, 0.0), data_freshness, cfg)
+        conf = _finding_confidence(f, bumps.get(i, 0.0), fb.get(f.pool_id, 1.0), cfg)
         anomaly_dicts.append({
             "type": "anomaly", "severity": _severity_from_confidence(conf), "label": ANOMALY_LABEL,
             "anomaly_type": f.anomaly_type, "provider": f.provider, "pool_id": f.pool_id,
@@ -189,10 +203,20 @@ def run_detection(session: Session, data_freshness: float = 1.0,
             "covered_txn_ids": f.covered_txn_ids, "active_event": f.within_event,
         })
 
-    liquidity_dicts = _forecast_liquidity_alerts(session, data_freshness, anchor)
+    liquidity_dicts = _forecast_liquidity_alerts(session, fb, anchor)
 
     all_dicts = anomaly_dicts + liquidity_dicts
     all_dicts.sort(key=lambda a: a["ts"])  # stable ids in chronological order
+    return all_dicts
+
+
+def run_detection(session: Session, data_freshness: float = 1.0,
+                  cfg: DetectorConfig = DEFAULT_DETECTOR_CONFIG) -> dict:
+    """(Re)compute all alerts over the seeded history + current forecasts, persist."""
+    fb = {pid.value: data_freshness for pid in PoolId}
+    all_dicts = compute_alert_dicts(session, fb, cfg)
+    anomaly_dicts = [a for a in all_dicts if a["type"] == "anomaly"]
+    liquidity_dicts = [a for a in all_dicts if a["type"] == "liquidity"]
 
     # Persist (idempotent: replace). Cases + their audit trail are regenerated
     # in lockstep with the alerts they mirror, so linkage stays consistent.

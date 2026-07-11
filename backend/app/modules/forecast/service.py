@@ -56,6 +56,8 @@ class ForecastResult:
     trend: str                      # accelerating | easing | steady | filling
     status: PoolStatus
     confidence: float
+    # at_floor | insufficient_data | intermittent | filling | projected
+    projection_state: str = "projected"
     confidence_factors: dict = field(default_factory=dict)
     recommended_action: str = ""
     evidence: list[str] = field(default_factory=list)
@@ -120,6 +122,102 @@ def _bucket_rates(burn: np.ndarray, cfg: ForecastConfig) -> np.ndarray:
     return rates
 
 
+# --------------------------------------------------------------------------- #
+# Trend robustness: EMA is the base (Rule 1); "accelerating" needs a CONFIRMED
+# multi-reading ramp (Rule 2) that isn't a single-transaction artefact (Rule 3).
+# --------------------------------------------------------------------------- #
+def _ema_reading_series(burn: np.ndarray, cfg: ForecastConfig) -> list[float]:
+    """The last N EMA burn-rate readings, one per recent bucket.
+
+    Each reading is the recency-weighted EMA computed *as of* that bucket's
+    boundary, so the series shows how the base rate evolved. The final reading
+    equals the current EMA burn rate (the base prediction is never altered).
+    """
+    b = cfg.history_bucket_minutes
+    total = len(burn)
+    readings: list[float] = []
+    for k in range(cfg.trend_reading_count - 1, -1, -1):
+        end = max(1, min(total, total - k * b))
+        readings.append(_ema_last(burn[:end], cfg.ema_span))
+    return readings
+
+
+def _confirmed_run(
+    readings: list[float], cfg: ForecastConfig, direction: int
+) -> tuple[bool, int, float]:
+    """Longest near-monotonic run in `direction` ending at the newest reading.
+
+    direction: +1 for a rising ramp, -1 for a falling one. A step may counter-move
+    within `trend_monotonic_tolerance` of the prior reading and still count, but the
+    run is only "confirmed" when it spans >= K steps AND its cumulative signed
+    magnitude clears `trend_min_cumulative_rise` (so a wiggle never qualifies).
+    """
+    diffs = [readings[i] - readings[i - 1] for i in range(1, len(readings))]
+    run, cumulative = 0, 0.0
+    for i in range(len(diffs) - 1, -1, -1):
+        step = diffs[i] * direction
+        tolerance = cfg.trend_monotonic_tolerance * (abs(readings[i]) + 1.0)
+        if step > 0 or step >= -tolerance:
+            run += 1
+            cumulative += step
+        else:
+            break
+    confirmed = (run >= cfg.trend_min_consecutive
+                 and cumulative >= cfg.trend_min_cumulative_rise)
+    return confirmed, run, cumulative
+
+
+def _is_intermittent(
+    in_window_ts: list[datetime], cfg: ForecastConfig
+) -> tuple[bool, dict]:
+    """Classify demand as intermittent (clumpy) vs sustained (fairly regular).
+
+    Inter-arrival times are measured over UNIQUE timestamps — a burst of several
+    transactions at the same instant is ONE arrival event, not many (this also
+    keeps regularly-clocked synthetic bursts from looking clumpy). Demand is
+    intermittent when the inter-arrival CV exceeds the threshold OR a single quiet
+    gap spans more than `max_gap_fraction` of the window (burst → gap → burst).
+    """
+    times = sorted(set(in_window_ts))
+    if len(times) < 2:
+        # A single arrival instant can't establish regularity -> treat cautiously.
+        return True, {"arrivals": len(times), "cv": None, "max_gap_fraction": None}
+    gaps = [(times[i] - times[i - 1]).total_seconds() / 60.0 for i in range(1, len(times))]
+    mean = float(np.mean(gaps))
+    if mean <= 0:
+        return True, {"arrivals": len(times), "cv": None, "max_gap_fraction": None}
+    cv = float(np.std(gaps)) / mean
+    max_gap_fraction = max(gaps) / cfg.analysis_window_minutes
+    intermittent = cv > cfg.intermittent_cv_threshold or max_gap_fraction > cfg.max_gap_fraction
+    return intermittent, {
+        "arrivals": len(times),
+        "cv": round(cv, 3),
+        "max_gap_fraction": round(max_gap_fraction, 3),
+    }
+
+
+def _dominant_spike(
+    effects: list[Effect], anchor: datetime, cfg: ForecastConfig
+) -> dict | None:
+    """If one transaction dominates the recent-window net drain, describe it.
+
+    Returns `{amount, share}` when the largest single cash-out is >= the dominance
+    threshold of the recent-window net drain (an isolated spike — evidence, not a
+    confirmed trend), else None.
+    """
+    recent_start = anchor - timedelta(minutes=cfg.spike_recent_minutes)
+    recent = [d for ts, d in effects if ts > recent_start]
+    net_drain = -sum(recent)                     # positive when draining on net
+    drains = [-d for d in recent if d < 0]       # per-transaction cash-out sizes
+    if net_drain <= 0 or not drains:
+        return None
+    largest = max(drains)
+    share = largest / net_drain
+    if share >= cfg.spike_dominance_threshold:
+        return {"amount": int(round(largest)), "share": round(share, 3)}
+    return None
+
+
 def _confidence(
     burn: np.ndarray,
     ema_burn: float,
@@ -154,7 +252,9 @@ def _confidence(
         "sample_size": int(sample_size),
         "coefficient_of_variation": round(cv, 3),
     }
-    return round(confidence, 2), factors
+    # Return UNROUNDED — the caller may apply a low-confidence penalty first and
+    # rounds exactly once, so a small confidence never collides with itself.
+    return confidence, factors
 
 
 def _balance_history(
@@ -189,9 +289,16 @@ def _rate_str(rate: float) -> str:
     return f"{abs(round(rate)):,}"
 
 
-def _recommended_action(pool_id: str, status: PoolStatus, trend: str) -> str:
+def _recommended_action(
+    pool_id: str, status: PoolStatus, trend: str, projection_state: str = "projected"
+) -> str:
     """Advisory, provider-respecting, safe language. Never cross-provider."""
     label = _PROVIDER_LABELS.get(pool_id, pool_id)
+    # Low-confidence watching states advise monitoring, not a premature top-up.
+    if projection_state in ("insufficient_data", "intermittent"):
+        if pool_id == PoolId.physical_cash.value:
+            return "Activity is limited or uneven — keep monitoring physical cash levels."
+        return f"Activity is limited or uneven — keep monitoring {label}."
     if status in (PoolStatus.healthy,) or trend == "filling":
         if pool_id == PoolId.physical_cash.value:
             return "Physical cash levels look stable — continue to monitor."
@@ -203,6 +310,7 @@ def _recommended_action(pool_id: str, status: PoolStatus, trend: str) -> str:
 
 
 def _evidence(
+    projection_state: str,
     pool_id: str,
     trend: str,
     ema_burn: float,
@@ -211,18 +319,54 @@ def _evidence(
     history: list[tuple[datetime, int]],
     sample_size: int,
     cfg: ForecastConfig,
+    spike: dict | None = None,
+    safety_floor: int = 0,
+    near_term_none: bool = False,
 ) -> list[str]:
+    win = cfg.analysis_window_minutes
+
+    # --- low-confidence / at-floor states: WATCHING, never "all clear" ---
+    if projection_state == "at_floor":
+        ev = [f"Balance at or below the safety reserve of BDT {safety_floor:,} — needs attention now."]
+        if history:
+            ev.append(f"Balance moved {history[0][1]:,}→{history[-1][1]:,} BDT over last {win}m")
+        ev.append(f"Based on {sample_size} transactions in the window")
+        return ev
+
+    if projection_state == "insufficient_data":
+        return [
+            "Limited recent activity — low-confidence, monitoring.",
+            f"Only {sample_size} transaction(s) in the last {win}m",
+        ]
+
+    if projection_state == "intermittent":
+        return [
+            "Repeated short bursts with quiet gaps — intermittent demand, monitoring.",
+            f"Net cash-out ~{_rate_str(ema_burn)} BDT/min over last {win}m",
+            f"Based on {sample_size} transactions in the window",
+        ]
+
+    # --- filling / projected ---
     ev: list[str] = []
     if trend == "filling":
-        ev.append(f"Net inflow ~{_rate_str(ema_burn)} BDT/min over last {cfg.window_minutes}m (filling)")
+        ev.append(f"Net inflow ~{_rate_str(ema_burn)} BDT/min over last {win}m (filling)")
     else:
-        ev.append(f"Net cash-out ~{_rate_str(ema_burn)} BDT/min over last {cfg.window_minutes}m")
+        ev.append(f"Net cash-out ~{_rate_str(ema_burn)} BDT/min over last {win}m")
 
     if history:
         first_b, last_b = history[0][1], history[-1][1]
-        ev.append(f"Balance moved {first_b:,}→{last_b:,} BDT over last {cfg.window_minutes}m")
+        ev.append(f"Balance moved {first_b:,}→{last_b:,} BDT over last {win}m")
 
-    if trend == "accelerating":
+    # A dominant single transaction is surfaced as pending-confirmation evidence
+    # (replacing the trend descriptor) — calm language, never "burn rate increased".
+    if spike is not None:
+        ev.append(
+            f"Large withdrawal of BDT {spike['amount']:,} observed — awaiting "
+            "further activity to confirm sustained demand."
+        )
+    elif near_term_none:
+        ev.append("No near-term shortage projected at the current rate.")
+    elif trend == "accelerating":
         ev.append(f"Draining is accelerating (recent ~{_rate_str(recent_rate)} vs earlier ~{_rate_str(earlier_rate)} BDT/min)")
     elif trend == "easing":
         ev.append(f"Draining is easing (recent ~{_rate_str(recent_rate)} vs earlier ~{_rate_str(earlier_rate)} BDT/min)")
@@ -256,56 +400,100 @@ def forecast_pool(
         safety_floor: operational reserve; depletion is measured to this, not 0.
         data_freshness: meta.confidence_modifier (1.0 when data is fresh).
     """
-    window_start = anchor - timedelta(minutes=cfg.window_minutes)
+    window_start = anchor - timedelta(minutes=cfg.analysis_window_minutes)
     current_balance = opening_balance + sum(d for _, d in effects)
 
+    # Everything operates over the analysis window (the memory horizon): activity
+    # older than window_start has aged out and does not influence the forecast.
     in_window = [(ts, d) for ts, d in effects if ts > window_start]
     sample_size = len(in_window)
 
     burn = _per_minute_burn(effects, window_start, cfg)
     ema_burn = _ema_last(burn, cfg.ema_span)
 
-    # Trend via earlier vs recent sub-windows.
-    recent_minutes = max(1, int(round(cfg.window_minutes * cfg.recent_fraction)))
-    earlier_minutes = max(1, cfg.window_minutes - recent_minutes)
+    # Recent vs earlier sub-window rates — used ONLY for the accelerating
+    # projection rate (how much the countdown shortens), never for the label.
+    recent_minutes = max(1, int(round(cfg.analysis_window_minutes * cfg.recent_fraction)))
+    earlier_minutes = max(1, cfg.analysis_window_minutes - recent_minutes)
     earlier_rate = float(burn[:earlier_minutes].sum()) / earlier_minutes
     recent_rate = float(burn[earlier_minutes:].sum()) / recent_minutes
 
-    if ema_burn <= 0:
+    headroom = current_balance - safety_floor
+
+    # --------------------------------------------------------- projection state
+    # Decide WHAT can be honestly stated before assigning any countdown. Too
+    # little / uneven data stays low-confidence AND WATCHING — never "all clear",
+    # never a fake precise countdown.
+    spike: dict | None = None
+    minutes_to_depletion: float | None = None
+    projected_ts: datetime | None = None
+    projection_rate = ema_burn
+
+    if headroom <= 0:
+        # Rule 5: already at/below the safety reserve — a REAL at-floor state now,
+        # surfaced directly rather than routed through the rate model.
+        projection_state = "at_floor"
+        trend = "steady"
+        minutes_to_depletion = 0.0
+        projected_ts = anchor
+    elif sample_size < cfg.min_txns_for_projection:
+        projection_state = "insufficient_data"       # watching, low-confidence
+        trend = "steady"
+    elif ema_burn <= 0:
+        projection_state = "filling"                  # safe: net inflow
         trend = "filling"
-        projection_rate = ema_burn  # negative / zero
+    elif _is_intermittent([ts for ts, _ in in_window], cfg)[0]:
+        projection_state = "intermittent"            # clumpy bursts: watching
+        trend = "steady"
     else:
-        if earlier_rate <= 0:
-            # Draining only started recently -> clearly accelerating.
-            trend = "accelerating" if recent_rate > 0 else "steady"
-        elif recent_rate > earlier_rate * cfg.accel_ratio:
+        projection_state = "projected"
+        readings = _ema_reading_series(burn, cfg)
+        spike = _dominant_spike(effects, anchor, cfg)                 # Rule 3
+        accel_confirmed, _, _ = _confirmed_run(readings, cfg, +1)     # Rule 2
+        ease_confirmed, _, _ = _confirmed_run(readings, cfg, -1)
+
+        if spike is not None:
+            trend = "steady"           # Rule 3 precedence: a lone spike never accelerates
+        elif accel_confirmed:
             trend = "accelerating"
-        elif recent_rate < earlier_rate * cfg.ease_ratio:
+        elif ease_confirmed:
             trend = "easing"
         else:
             trend = "steady"
-        # Accelerating projects with the higher recent rate (countdown shortens),
-        # but never slower than the EMA. Otherwise project with the EMA.
+
+        # Accelerating shortens via the higher recent rate (never below the EMA);
+        # every other trend keeps the EMA base, so a lone spike cannot shorten it.
         projection_rate = max(recent_rate, ema_burn) if trend == "accelerating" else ema_burn
 
-    # Minutes to depletion (to the safety floor, not to zero).
-    headroom = current_balance - safety_floor
-    if trend == "filling" or projection_rate <= 0:
-        minutes_to_depletion: float | None = None
-        projected_ts: datetime | None = None
-    elif headroom <= 0:
-        minutes_to_depletion = 0.0
-        projected_ts = anchor
-    else:
-        minutes_to_depletion = headroom / projection_rate
-        projected_ts = anchor + timedelta(minutes=minutes_to_depletion)
+        # Rule 4: rate stability + horizon. Floor the rate before dividing, and
+        # cap absurd countdowns as "no near-term shortage" (null) rather than a
+        # falsely-precise raw number.
+        if projection_rate > cfg.rate_epsilon:
+            mtd = headroom / projection_rate
+            if mtd <= cfg.max_horizon_minutes:
+                minutes_to_depletion = mtd
+                projected_ts = anchor + timedelta(minutes=mtd)
 
-    status = status_from_minutes(minutes_to_depletion, trend, cfg)
+    near_term_none = projection_state == "projected" and minutes_to_depletion is None
+
+    # ---------------------------------------------------------------- status
+    if projection_state == "at_floor":
+        status = PoolStatus.critical
+    elif projection_state in ("insufficient_data", "intermittent"):
+        status = PoolStatus.watch    # WATCHING — low-confidence, never "all clear"
+    else:  # filling / projected
+        status = status_from_minutes(minutes_to_depletion, trend, cfg)
+
     confidence, factors = _confidence(burn, ema_burn, sample_size, data_freshness, cfg)
+    if projection_state in ("insufficient_data", "intermittent"):
+        confidence *= cfg.low_confidence_penalty
+    confidence = round(confidence, 2)   # round exactly once (no double-rounding)
+
     history = _balance_history(effects, opening_balance, window_start, anchor, cfg)
-    evidence = _evidence(pool_id, trend, ema_burn, earlier_rate, recent_rate,
-                         history, sample_size, cfg)
-    action = _recommended_action(pool_id, status, trend)
+    evidence = _evidence(projection_state, pool_id, trend, ema_burn, earlier_rate,
+                         recent_rate, history, sample_size, cfg, spike=spike,
+                         safety_floor=safety_floor, near_term_none=near_term_none)
+    action = _recommended_action(pool_id, status, trend, projection_state)
 
     return ForecastResult(
         pool_id=pool_id,
@@ -319,6 +507,7 @@ def forecast_pool(
         trend=trend,
         status=status,
         confidence=confidence,
+        projection_state=projection_state,
         confidence_factors=factors,
         recommended_action=action,
         evidence=evidence,
@@ -350,8 +539,14 @@ def compute_forecasts(
     session: Session,
     data_freshness: float = 1.0,
     cfg: ForecastConfig = DEFAULT_CONFIG,
+    freshness_by_pool: dict[str, float] | None = None,
 ) -> list[ForecastResult]:
-    """Compute forecasts for all pools, anchored to the latest observed activity."""
+    """Compute forecasts for all pools, anchored to the latest observed activity.
+
+    `freshness_by_pool` (Phase 5) lets a broken feed degrade only its own pool's
+    confidence: a per-pool override of `data_freshness` (falls back to the scalar
+    for any pool not listed). Fresh feeds keep `data_freshness == 1.0`.
+    """
     pools = session.exec(select(Pool)).all()
     effects_by_pool, anchor = _pool_effects_from_db(session)
     if anchor is None:
@@ -359,6 +554,10 @@ def compute_forecasts(
 
     results: list[ForecastResult] = []
     for pool in pools:
+        pool_freshness = (
+            freshness_by_pool.get(pool.pool_id, data_freshness)
+            if freshness_by_pool else data_freshness
+        )
         results.append(
             forecast_pool(
                 pool_id=pool.pool_id,
@@ -366,7 +565,7 @@ def compute_forecasts(
                 opening_balance=pool.opening_balance,
                 anchor=anchor,
                 safety_floor=safety_floor_for(pool.pool_id),
-                data_freshness=data_freshness,
+                data_freshness=pool_freshness,
                 cfg=cfg,
             )
         )

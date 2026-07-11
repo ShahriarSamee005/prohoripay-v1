@@ -41,6 +41,7 @@ def _to_out(r: ForecastResult) -> ForecastOut:
         evidence=r.evidence,
         status=r.status.value,
         trend=r.trend,
+        projection_state=r.projection_state,
         confidence_factors=ConfidenceFactors(**r.confidence_factors),
         history=[HistoryPoint(ts=_iso_z(t), balance=b) for t, b in r.history],
     )
