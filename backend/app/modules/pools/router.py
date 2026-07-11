@@ -2,6 +2,9 @@
 
 Ordering puts the shared physical cash pool first, then providers, matching the
 hero framing (shared constraint first, provider breakdown beneath).
+
+Pool `status` is NOT read from the stored column — it comes from the forecast
+engine (`pool_status_map`), so /api/pools and /api/forecast can never disagree.
 """
 
 from __future__ import annotations
@@ -11,8 +14,9 @@ from sqlmodel import Session, select
 
 from app.common.meta import make_meta
 from app.core.db import get_session
-from app.core.enums import PoolId
+from app.core.enums import PoolId, PoolStatus
 from app.core.models import Pool
+from app.modules.forecast.service import pool_status_map
 from app.modules.pools.schemas import PoolOut, PoolsResponse
 
 router = APIRouter(prefix="/api", tags=["pools"])
@@ -28,9 +32,12 @@ _POOL_ORDER = {
 
 @router.get("/pools", response_model=PoolsResponse)
 def get_pools(session: Session = Depends(get_session)) -> PoolsResponse:
-    """Return all balance pools plus the degraded-data meta envelope."""
+    """Return all balance pools (status is forecast-driven) plus the meta envelope."""
     pools = session.exec(select(Pool)).all()
     pools = sorted(pools, key=lambda p: _POOL_ORDER.get(p.pool_id, 99))
+
+    # Single source of truth for status: the forecast engine.
+    status_by_pool = pool_status_map(session)
 
     items = [
         PoolOut(
@@ -40,7 +47,7 @@ def get_pools(session: Session = Depends(get_session)) -> PoolsResponse:
             label=p.label,
             balance=p.current_balance,
             currency=p.currency,
-            status=p.status.value,
+            status=status_by_pool.get(p.pool_id, PoolStatus.healthy).value,
         )
         for p in pools
     ]

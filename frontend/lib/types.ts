@@ -81,3 +81,48 @@ export interface TransactionsResponse {
   transactions: Transaction[];
   meta: Meta;
 }
+
+// ─── Phase 2 — Liquidity forecast ────────────────────────────────────────────
+// Contract base shape: pool_id, current_balance, burn_rate_per_min,
+// minutes_to_depletion, projected_depletion_ts, confidence, recommended_action,
+// evidence. Extended here with: trend, safety_floor, confidence_factors, history
+// (proposed additions — backend must match or the mock adapter bridges the gap).
+
+export type TrendDirection = "accelerating" | "steady" | "easing" | "filling";
+
+export interface HistoryPoint {
+  ts: string;      // ISO-8601 UTC
+  balance: number; // integer BDT
+}
+
+export interface ConfidenceFactors {
+  /** 0–1: share of confidence lost to high volatility */
+  volatility: number;
+  /** 0–1: how much data the model had (more = better) */
+  sample_size: number;
+  /** 0–1: how fresh the feed data is (1 = real-time) */
+  data_freshness: number;
+}
+
+export interface Forecast {
+  pool_id: PoolId;
+  current_balance: number;
+  burn_rate_per_min: number;
+  /** null when trend is "filling" — no shortage projected */
+  minutes_to_depletion: number | null;
+  /** null when trend is "filling" */
+  projected_depletion_ts: string | null;
+  /** BDT balance below which operations are constrained */
+  safety_floor: number;
+  confidence: number; // 0–1
+  confidence_factors: ConfidenceFactors;
+  trend: TrendDirection;
+  recommended_action: string;
+  evidence: string[];
+  history: HistoryPoint[];
+}
+
+export interface ForecastsResponse {
+  forecasts: Forecast[];
+  meta: Meta;
+}

@@ -7,12 +7,14 @@ import type {
   Health,
   PoolsResponse,
   TransactionsResponse,
+  ForecastsResponse,
   Provider,
 } from "./types";
 import {
   getMockAgent,
   getMockPools,
   getMockTransactions,
+  getMockForecasts,
 } from "./mock";
 
 export const API_BASE_URL =
@@ -70,6 +72,12 @@ export async function getAgent(): Promise<Agent> {
 export async function getPools(): Promise<PoolsResponse> {
   if (USE_MOCK) return getMockPools();
   return request<PoolsResponse>("/api/pools");
+}
+
+/** GET /api/forecast (Phase 2) */
+export async function getForecast(): Promise<ForecastsResponse> {
+  if (USE_MOCK) return getMockForecasts();
+  return request<ForecastsResponse>("/api/forecast");
 }
 
 /** GET /api/transactions (Phase 1) */

@@ -1,11 +1,12 @@
 "use client";
 
 import { motion } from "framer-motion";
-import type { Pool } from "@/lib/types";
+import type { Pool, Forecast } from "@/lib/types";
 import { PoolStatusChip } from "./pool-status-chip";
 
 interface HeroCardProps {
   pools: Pool[];
+  forecasts?: Forecast[];
   agentName: string;
   agentArea: string;
 }
@@ -15,20 +16,44 @@ function fmt(n: number) {
 }
 
 /**
- * Hero card per contract's "Hero framing" rules (compliance-critical):
- * - Shows Total Holdings ONLY labeled as a sum of separate, non-interchangeable pools.
- * - Always surfaces the constraining pool (lowest balance / critical/watch status).
- * - Never presents the total as a single spendable balance or health signal.
- * - Uses bg-brand-gradient per design.md magenta hero recipe.
+ * Hero framing (contract §Hero framing):
+ * - Total Holdings = sum of separate, non-interchangeable pools (never "spendable").
+ * - Constraining pool = pool with SOONEST minutes_to_depletion when forecast is
+ *   available, else lowest-headroom / critical/watch pool.
+ * - Status chip surfaces forecast-derived countdown when present.
  */
-export function HeroCard({ pools, agentName, agentArea }: HeroCardProps) {
-  const total = pools.reduce((s, p) => s + p.balance, 0);
-
-  // Constraining pool: critical first, then watch, then the lowest balance
-  const constraining =
+function getConstrainingPool(pools: Pool[], forecasts?: Forecast[]): Pool {
+  if (forecasts && forecasts.length > 0) {
+    const depleting = forecasts
+      .filter((f) => f.minutes_to_depletion != null)
+      .sort((a, b) => a.minutes_to_depletion! - b.minutes_to_depletion!);
+    if (depleting.length > 0) {
+      const soonest = depleting[0];
+      const match = pools.find((p) => p.pool_id === soonest.pool_id);
+      if (match) return match;
+    }
+    // All filling/stable — show lowest balance pool
+    return pools.reduce((a, b) => (a.balance < b.balance ? a : b));
+  }
+  // Fallback: status-based, then lowest balance
+  return (
     pools.find((p) => p.status === "critical") ??
     pools.find((p) => p.status === "watch") ??
-    pools.reduce((a, b) => (a.balance < b.balance ? a : b));
+    pools.reduce((a, b) => (a.balance < b.balance ? a : b))
+  );
+}
+
+export function HeroCard({
+  pools,
+  forecasts,
+  agentName,
+  agentArea,
+}: HeroCardProps) {
+  const total = pools.reduce((s, p) => s + p.balance, 0);
+  const constraining = getConstrainingPool(pools, forecasts);
+  const constrainingForecast = forecasts?.find(
+    (f) => f.pool_id === constraining.pool_id,
+  );
 
   return (
     <motion.div
@@ -48,19 +73,17 @@ export function HeroCard({ pools, agentName, agentArea }: HeroCardProps) {
 
       {/* Total holdings — compliance label is mandatory */}
       <div>
-        <p className="text-label-md opacity-80">
-          Total Holdings
-        </p>
+        <p className="text-label-md opacity-80">Total Holdings</p>
         <p className="text-display-lg tabular-nums-bv leading-none">
           ৳{fmt(total)}
         </p>
-        {/* Compliance disclaimer — always visible */}
         <p className="mt-1 text-body-sm opacity-70">
-          Sum of separate, non-interchangeable pools · not a single spendable balance
+          Sum of separate, non-interchangeable pools · not a single spendable
+          balance
         </p>
       </div>
 
-      {/* Constraining pool — must always be shown beside the total */}
+      {/* Constraining pool — always shown beside the total */}
       <div className="rounded-lg bg-white/10 backdrop-blur-sm px-4 py-3 flex items-center justify-between gap-3">
         <div>
           <p className="text-label-sm opacity-80">Constraining pool</p>
@@ -71,24 +94,37 @@ export function HeroCard({ pools, agentName, agentArea }: HeroCardProps) {
             </span>
           </p>
         </div>
-        <ConstraintChip status={constraining.status} />
+        <ConstraintChip pool={constraining} forecast={constrainingForecast} />
       </div>
     </motion.div>
   );
 }
 
-function ConstraintChip({ status }: { status: Pool["status"] }) {
-  const map = {
-    critical: { label: "⚠ Physical cash critical", bg: "bg-white/20 text-on-brand border border-white/30" },
-    watch: { label: "● Needs attention", bg: "bg-white/15 text-on-brand border border-white/20" },
-    healthy: { label: "✓ Healthy", bg: "bg-white/15 text-on-brand border border-white/20" },
-  } as const;
-  const cfg = map[status];
+function ConstraintChip({
+  pool,
+  forecast,
+}: {
+  pool: Pool;
+  forecast?: Forecast;
+}) {
+  const mins = forecast?.minutes_to_depletion;
+
+  let label: string;
+  if (mins != null) {
+    label = `⚠ ~${mins} min`;
+  } else if (forecast?.trend === "filling") {
+    label = "↑ Growing";
+  } else if (pool.status === "critical") {
+    label = "⚠ Critical";
+  } else if (pool.status === "watch") {
+    label = "● Needs attention";
+  } else {
+    label = "✓ Healthy";
+  }
+
   return (
-    <span
-      className={`shrink-0 inline-flex items-center rounded-pill px-3 py-1 text-label-sm ${cfg.bg}`}
-    >
-      {cfg.label}
+    <span className="shrink-0 inline-flex items-center rounded-pill px-3 py-1 text-label-sm bg-white/20 text-on-brand border border-white/30">
+      {label}
     </span>
   );
 }

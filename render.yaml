@@ -1,0 +1,67 @@
+# Render Blueprint — ProhoriPay (backend API + frontend web)
+# Docs: https://render.com/docs/blueprint-spec
+#
+# Deploy: push this repo to GitHub/GitLab, then in Render:
+#   New + -> Blueprint -> pick this repo. Render reads this file and creates BOTH services.
+#
+# First-deploy cross-wiring (two URLs aren't known until the services exist):
+#   1. Deploy the Blueprint. Note each service's URL, e.g.
+#        api  -> https://prohoripay-api.onrender.com
+#        web  -> https://prohoripay-web.onrender.com
+#   2. Set the frontend's NEXT_PUBLIC_API_BASE_URL to the api URL, and the backend's
+#        CORS_ORIGINS to the web URL (see the placeholders below).
+#   3. Redeploy. The frontend MUST be rebuilt for NEXT_PUBLIC_* to take effect
+#        (those vars are inlined into the client bundle at BUILD time, not runtime).
+#
+# Notes:
+# - Render injects $PORT into every service; each server must bind it.
+# - Region `singapore` is the closest to Bangladesh for lower latency.
+
+services:
+  # ---------------------------------------------------------------- backend API
+  - type: web
+    name: prohoripay-api
+    runtime: python
+    plan: free
+    region: singapore
+    rootDir: backend
+    buildCommand: "pip install -r requirements.txt && python -m app.core.seed"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Match (or exceed) the version the app was built/tested on.
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      # SQLite in the working dir (backend/). Default is fine for the prototype.
+      - key: DATABASE_URL
+        value: "sqlite:///./prohoripay.db"
+      # Comma-separated allowed origins. Replace with your deployed frontend URL(s).
+      # After first deploy, set this to the web service's URL (+ localhost for dev).
+      - key: CORS_ORIGINS
+        value: "https://prohoripay-web.onrender.com,http://localhost:3000"
+      # Set the real value in the Render dashboard (kept out of source control).
+      - key: GROQ_API_KEY
+        sync: false
+
+  # --------------------------------------------------------------- frontend web
+  - type: web
+    name: prohoripay-web
+    runtime: node
+    plan: free
+    region: singapore
+    rootDir: frontend
+    buildCommand: "npm ci && npm run build"
+    startCommand: "npm start"        # `next start` binds 0.0.0.0 and reads $PORT
+    autoDeploy: true
+    envVars:
+      # Next 16 + React 19 need Node 20+.
+      - key: NODE_VERSION
+        value: "20.18.0"
+      # Base URL of the backend API. INLINED AT BUILD TIME — after the api service
+      # exists, set this to its URL and REDEPLOY the frontend so it takes effect.
+      - key: NEXT_PUBLIC_API_BASE_URL
+        value: "https://prohoripay-api.onrender.com"
+      # Use the real backend, not the mock adapter.
+      - key: NEXT_PUBLIC_USE_MOCK
+        value: "false"
