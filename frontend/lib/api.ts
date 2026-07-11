@@ -13,6 +13,14 @@ import type {
   Case,
   CasesResponse,
   CaseActionBody,
+  SimStartBody,
+  SimEidRushBody,
+  SimInjectAnomalyBody,
+  SimBreakFeedBody,
+  SimRestoreFeedBody,
+  SimControlResponse,
+  ExplainRequest,
+  ExplainResponse,
 } from "./types";
 import {
   getMockAgent,
@@ -25,6 +33,7 @@ import {
   mockAckCase,
   mockEscalateCase,
   mockResolveCase,
+  getMockExplain,
 } from "./mock";
 
 export const API_BASE_URL =
@@ -153,6 +162,64 @@ export async function resolveCase(
     body: JSON.stringify(body),
   });
 }
+
+// ─── Phase 5 — Simulation controls ───────────────────────────────────────────
+
+async function simPost<B>(path: string, body?: B): Promise<SimControlResponse> {
+  if (USE_MOCK) {
+    // Mock mode: sim controls can't drive the SSE stream, but we return a
+    // plausible response so the demo panel buttons give feedback.
+    const label = path.replace("/api/sim/", "");
+    const bodyStr = body && Object.keys(body as object).length
+      ? " — " + JSON.stringify(body)
+      : "";
+    return { ok: true, applied: `[mock] ${label}${bodyStr}` };
+  }
+  return request<SimControlResponse>(path, {
+    method: "POST",
+    headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+}
+
+export const simStart = (body: SimStartBody = {}) =>
+  simPost("/api/sim/start", body);
+
+export const simPause = () =>
+  simPost("/api/sim/pause");
+
+export const simReset = () =>
+  simPost("/api/sim/reset");
+
+export const simEidRush = (body: SimEidRushBody) =>
+  simPost("/api/sim/eid_rush", body);
+
+export const simInjectAnomaly = (body: SimInjectAnomalyBody) =>
+  simPost("/api/sim/inject_anomaly", body);
+
+export const simBreakFeed = (body: SimBreakFeedBody) =>
+  simPost("/api/sim/break_feed", body);
+
+export const simRestoreFeed = (body: SimRestoreFeedBody) =>
+  simPost("/api/sim/restore_feed", body);
+
+// ─── Phase 6 — Natural-language explanation ───────────────────────────────────
+
+/**
+ * POST /api/explain — returns an EN/বাংলা/Banglish plain-language explanation of
+ * an alert or forecast. Falls back to a deterministic template if Groq is
+ * unavailable. Source is always declared ("groq" | "fallback").
+ */
+export async function explain(req: ExplainRequest): Promise<ExplainResponse> {
+  if (USE_MOCK) return getMockExplain(req);
+  return request<ExplainResponse>("/api/explain", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+}
+
+// ─── Phase 1 — Transactions ───────────────────────────────────────────────────
 
 /** GET /api/transactions (Phase 1) */
 export async function getTransactions(params?: {

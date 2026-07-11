@@ -24,6 +24,8 @@ import type {
   CaseStatus,
   CasesResponse,
   CaseActionBody,
+  ExplainRequest,
+  ExplainResponse,
 } from "./types";
 
 const MOCK_META_OK: Meta = {
@@ -248,6 +250,7 @@ export const MOCK_FORECASTS: Forecast[] = [
     confidence: 0.88,
     confidence_factors: { volatility: 0.35, sample_size: 0.85, data_freshness: 0.95 },
     trend: "accelerating",
+    projection_state: "projected",
     recommended_action:
       "Request physical cash top-up from the nearest distributor or consider pausing cash-out services temporarily until replenished.",
     evidence: [
@@ -268,6 +271,7 @@ export const MOCK_FORECASTS: Forecast[] = [
     confidence: 0.91,
     confidence_factors: { volatility: 0.15, sample_size: 0.90, data_freshness: 1.0 },
     trend: "filling",
+    projection_state: "filling",
     recommended_action:
       "bKash e-money balance is growing. No top-up needed. Monitor physical cash — it remains the constraining pool.",
     evidence: [
@@ -288,6 +292,7 @@ export const MOCK_FORECASTS: Forecast[] = [
     confidence: 0.79,
     confidence_factors: { volatility: 0.20, sample_size: 0.72, data_freshness: 0.88 },
     trend: "steady",
+    projection_state: "projected",
     recommended_action:
       "Nagad balance is draining at a low, steady rate. No immediate action needed — reassess in 4–6 hours.",
     evidence: [
@@ -308,6 +313,7 @@ export const MOCK_FORECASTS: Forecast[] = [
     confidence: 0.74,
     confidence_factors: { volatility: 0.42, sample_size: 0.68, data_freshness: 0.90 },
     trend: "easing",
+    projection_state: "projected",
     recommended_action:
       "Rocket drain rate is easing. Watch for recurrence — consider a modest top-up if the easing reverses within the next 2 hours.",
     evidence: [
@@ -731,4 +737,130 @@ export function getMockTransactions(params?: {
     txns = txns.slice(0, params.limit);
   }
   return { transactions: txns, meta: MOCK_META_OK };
+}
+
+// ─── Phase 6 mock explanations ────────────────────────────────────────────────
+// Keyed by `${kind}:${id}:${lang}`. Includes a source:"fallback" example on
+// alert_0001 banglish and physical_cash banglish so the "Auto" badge is visible
+// in demo without needing backend errors.
+
+const MOCK_EXPLAIN_MAP: Record<string, ExplainResponse> = {
+  "forecast:physical_cash:en": {
+    kind: "forecast", id: "physical_cash", lang: "en", source: "groq",
+    text: "Physical cash is critically low at ৳4,200 and draining fast. At the current cash-out rate of ~120 BDT/min, the drawer may be empty in about 18 minutes. Consider requesting replenishment from the nearest distributor promptly. Human review is recommended before taking any action.",
+  },
+  "forecast:physical_cash:bn": {
+    kind: "forecast", id: "physical_cash", lang: "bn", source: "groq",
+    text: "ফিজিক্যাল ক্যাশ মাত্র ৳৪,২০০ বাকি আছে এবং দ্রুত কমছে। বর্তমান হারে প্রায় ১৮ মিনিটে শেষ হতে পারে। নিকটস্থ ডিস্ট্রিবিউটর থেকে দ্রুত রিফিলের ব্যবস্থা নিন। যেকোনো পদক্ষেপের আগে মানব পর্যালোচনা প্রয়োজন।",
+  },
+  "forecast:physical_cash:banglish": {
+    kind: "forecast", id: "physical_cash", lang: "banglish", source: "fallback",
+    text: "Physical cash ekdom kom — ৳4,200 baki ache ar 18 minute-e shesh hote pare. Distributor theke refill newa dorkar. Kono action-er age manush review kora uchit.",
+  },
+  "forecast:bkash:en": {
+    kind: "forecast", id: "bkash", lang: "en", source: "groq",
+    text: "bKash e-money balance is growing due to net cash-in activity — no shortage is projected at this time. Physical cash remains the constraining pool. Continue monitoring and act if the trend reverses. Human review recommended.",
+  },
+  "forecast:bkash:bn": {
+    kind: "forecast", id: "bkash", lang: "bn", source: "groq",
+    text: "bKash-এর ই-মানি ব্যালেন্স বাড়ছে — এখন কোনো সংকট নেই। ফিজিক্যাল ক্যাশই সীমাবদ্ধ পুল। পরিবর্তন হলে পুনরায় পর্যালোচনা করুন। মানব পর্যালোচনা সুপারিশ করা হচ্ছে।",
+  },
+  "forecast:bkash:banglish": {
+    kind: "forecast", id: "bkash", lang: "banglish", source: "groq",
+    text: "bKash e-money balance badhche — cash-in activity er karone. Ekhon shortage nai. Physical cash-e nojor rakha dorkar. Trend badle gele review kora uchit.",
+  },
+  "forecast:nagad:en": {
+    kind: "forecast", id: "nagad", lang: "en", source: "groq",
+    text: "Nagad balance is draining steadily at ~25 BDT/min — at this pace depletion is many hours away. No immediate action is needed. Reassess in 4–6 hours, and escalate if the rate accelerates. Human review recommended.",
+  },
+  "forecast:nagad:bn": {
+    kind: "forecast", id: "nagad", lang: "bn", source: "groq",
+    text: "Nagad ব্যালেন্স ধীরে কমছে — প্রতি মিনিটে প্রায় ২৫ টাকা। সংকট অনেক ঘণ্টা দূরে। এখনই কিছু করার দরকার নেই। ৪–৬ ঘণ্টায় পুনরায় দেখুন। মানব পর্যালোচনা সুপারিশ করা হচ্ছে।",
+  },
+  "forecast:nagad:banglish": {
+    kind: "forecast", id: "nagad", lang: "banglish", source: "groq",
+    text: "Nagad balance aste aste kamche — minute-e 25 taka. Ekhon urgent kisu lagbe na. 4-6 ghanta pore abar check korun. Human review-er pramors ache.",
+  },
+  "forecast:rocket:en": {
+    kind: "forecast", id: "rocket", lang: "en", source: "groq",
+    text: "Rocket's drain rate is easing after an earlier spike and the balance is well above the safety floor. No immediate action is needed, though a modest top-up may be considered if the rate climbs again. Human review recommended before any step.",
+  },
+  "forecast:rocket:bn": {
+    kind: "forecast", id: "rocket", lang: "bn", source: "groq",
+    text: "Rocket-এর নিষ্কাশন হার কমছে এবং ব্যালেন্স নিরাপদ সীমার উপরে। এখনই পদক্ষেপ নেওয়ার দরকার নেই। হার আবার বাড়লে সামান্য টপ-আপ বিবেচনা করুন। যেকোনো পদক্ষেপের আগে মানব পর্যালোচনা প্রয়োজন।",
+  },
+  "forecast:rocket:banglish": {
+    kind: "forecast", id: "rocket", lang: "banglish", source: "groq",
+    text: "Rocket-er drain rate kamche ar balance safe floor-er upore ache. Ekhon kono action lagbe na. Rate bere gele top-up consider kora jabe. Human review dorkar.",
+  },
+  "alert:alert_0001:en": {
+    kind: "alert", id: "alert_0001", lang: "en", source: "groq",
+    text: "An unusual transaction pattern has been detected on bKash — 12 transfers of similar amounts from multiple accounts within 45 minutes. This pattern warrants a closer look. No action has been taken automatically. Human review is recommended before drawing any conclusion.",
+  },
+  "alert:alert_0001:bn": {
+    kind: "alert", id: "alert_0001", lang: "bn", source: "groq",
+    text: "bKash-এ অস্বাভাবিক লেনদেন ধরন সনাক্ত হয়েছে — ৪৫ মিনিটে একাধিক অ্যাকাউন্ট থেকে কাছাকাছি পরিমাণের ১২টি ট্রান্সফার। এটি পর্যালোচনার যোগ্য। কোনো স্বয়ংক্রিয় পদক্ষেপ নেওয়া হয়নি। সিদ্ধান্তের আগে মানব পর্যালোচনা প্রয়োজন।",
+  },
+  "alert:alert_0001:banglish": {
+    kind: "alert", id: "alert_0001", lang: "banglish", source: "fallback",
+    text: "bKash-e unusual transaction pattern dekha geche — 45 minute-e multiple account theke same amount-er 12ti transfer. Review korte hobe. Automatic kono action newa hoini. Human review dorkar.",
+  },
+  "alert:alert_0002:en": {
+    kind: "alert", id: "alert_0002", lang: "en", source: "groq",
+    text: "Nagad is showing a sudden spike in transaction rate — well above the normal baseline for this time of day, with no known event to explain it. This may be legitimate demand or may need further review. No automatic action has been taken. Human review recommended.",
+  },
+  "alert:alert_0002:bn": {
+    kind: "alert", id: "alert_0002", lang: "bn", source: "groq",
+    text: "Nagad-এ লেনদেনের হার হঠাৎ বেড়ে গেছে — স্বাভাবিকের চেয়ে অনেক বেশি এবং কোনো পরিচিত কারণ নেই। বৈধ চাহিদা বা পর্যালোচনার প্রয়োজন হতে পারে। কোনো স্বয়ংক্রিয় পদক্ষেপ নেওয়া হয়নি। মানব পর্যালোচনা প্রয়োজন।",
+  },
+  "alert:alert_0002:banglish": {
+    kind: "alert", id: "alert_0002", lang: "banglish", source: "groq",
+    text: "Nagad-e transaction rate onek bere geche — normal theke onek beshi, kono known karana nei. Legitimate o hote pare, review-o lagti pare. Automatic action newa hoini. Human review dorkar.",
+  },
+  "alert:alert_0003:en": {
+    kind: "alert", id: "alert_0003", lang: "en", source: "groq",
+    text: "Physical cash is critically low — at ৳4,200 and draining at 120 BDT/min, depletion is projected in about 18 minutes. Replenishment should be requested urgently. No action has been taken automatically. Human review is recommended before any step.",
+  },
+  "alert:alert_0003:bn": {
+    kind: "alert", id: "alert_0003", lang: "bn", source: "groq",
+    text: "ফিজিক্যাল ক্যাশ বিপজ্জনকভাবে কম — ৳৪,২০০ বাকি এবং প্রায় ১৮ মিনিটে শেষ হতে পারে। অবিলম্বে রিফিলের ব্যবস্থা নিন। কোনো স্বয়ংক্রিয় পদক্ষেপ নেওয়া হয়নি। যেকোনো পদক্ষেপের আগে মানব পর্যালোচনা প্রয়োজন।",
+  },
+  "alert:alert_0003:banglish": {
+    kind: "alert", id: "alert_0003", lang: "banglish", source: "groq",
+    text: "Physical cash ekdom kom — ৳4,200 baki, 18 minute-e shesh hote pare. Turant refill-er byabostha korun. Automatic kono action newa hoini. Human review kore podokhep newa uchit.",
+  },
+  "alert:alert_0004:en": {
+    kind: "alert", id: "alert_0004", lang: "en", source: "groq",
+    text: "Rocket recorded a burst of off-hours transactions that has since stabilized. The pattern was flagged for review and linked to a salary disbursement batch. No unusual activity is currently ongoing. Human review is recommended to confirm the resolution.",
+  },
+  "alert:alert_0004:bn": {
+    kind: "alert", id: "alert_0004", lang: "bn", source: "groq",
+    text: "Rocket-এ রাতের বেলা অস্বাভাবিক লেনদেন হয়েছিল, যা বেতন বিতরণ ব্যাচের সাথে সম্পর্কিত বলে চিহ্নিত হয়েছে। এখন স্থিতিশীল। মানব পর্যালোচনার মাধ্যমে সমাধান নিশ্চিত করুন।",
+  },
+  "alert:alert_0004:banglish": {
+    kind: "alert", id: "alert_0004", lang: "banglish", source: "fallback",
+    text: "Rocket-e rater bela unusual transaction hoyechilo — salary disbursement batch-er sathe related mone hocche. Ekhon stable. Human review kore confirm kora uchit.",
+  },
+};
+
+/**
+ * getMockExplain — simulates ~350ms Groq latency so the shimmer is visible.
+ * Falls back to a safe placeholder for unknown (kind, id, lang) combos.
+ */
+export function getMockExplain(req: ExplainRequest): Promise<ExplainResponse> {
+  const key = `${req.kind}:${req.id}:${req.lang}`;
+  const hit = MOCK_EXPLAIN_MAP[key];
+  const response: ExplainResponse = hit ?? {
+    kind: req.kind,
+    id: req.id,
+    lang: req.lang,
+    source: "fallback",
+    text:
+      req.lang === "bn"
+        ? "ব্যাখ্যা এই মুহূর্তে পাওয়া যায়নি। মানব পর্যালোচনা প্রয়োজন।"
+        : req.lang === "banglish"
+        ? "Explanation ekhon pawa jacche na. Human review dorkar."
+        : "Explanation not available. Human review recommended.",
+  };
+  return new Promise((resolve) => setTimeout(() => resolve(response), 350));
 }

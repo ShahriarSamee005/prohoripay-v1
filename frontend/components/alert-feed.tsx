@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronRight, Info, X } from "lucide-react";
 import type {
@@ -9,8 +9,17 @@ import type {
   AlertSeverity,
   AnomalyType,
   Case,
+  ExplainLang,
+  Provider,
+  ProviderFeedStatus,
 } from "@/lib/types";
+import { explain } from "@/lib/api";
 import { CasePanel } from "./case-panel";
+import {
+  ExplanationBlock,
+  getSessionLang,
+  setSessionLang,
+} from "./explanation-block";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -88,13 +97,93 @@ function worstSeverity(alerts: Alert[]): AlertSeverity {
   return "low";
 }
 
-// Static Bangla/Banglish templates — Groq wires in Phase 6
-const BANGLA: Record<string, string> = {
+// Phase-3 static Bangla templates — still used as initialFallback for Phase 6
+// ExplanationBlock (shown while Groq responds, and if the request fails entirely).
+const STATIC_BANGLA: Record<string, string> = {
   alert_0001: "⚠️ bKash-এ অস্বাভাবিক লেনদেন ধরন — রিভিউ প্রয়োজন।",
   alert_0002: "⚠️ Nagad-এ লেনদেনের হার অস্বাভাবিক — পর্যালোচনা করুন।",
   alert_0003: "⚠️ ক্যাশ ড্রয়ারে অর্থ কম — দ্রুত ব্যবস্থা নিন।",
   alert_0004: "⚠️ Rocket-এ রাতের অস্বাভাবিক লেনদেন — পর্যালোচনা সম্পন্ন।",
 };
+
+// ── Compact explanation line for the alert card ───────────────────────────────
+// Calls /api/explain and shows the text inline with a source badge. Falls back
+// to the static Bangla template so the card is never blank.
+
+function CompactExplain({
+  alertId,
+  lang,
+  fallback,
+}: {
+  alertId: string;
+  lang: ExplainLang;
+  fallback?: string;
+}) {
+  const [text, setText] = useState<string>(fallback ?? "");
+  const [source, setSource] = useState<"groq" | "fallback" | null>(null);
+  const [loading, setLoading] = useState(true);
+  const reqRef = useRef(0);
+
+  useEffect(() => {
+    const reqId = ++reqRef.current;
+    setLoading(true);
+    setText(fallback ?? "");
+    setSource(null);
+    explain({ kind: "alert", id: alertId, lang })
+      .then((r) => {
+        if (reqRef.current !== reqId) return;
+        setText(r.text);
+        setSource(r.source);
+      })
+      .catch(() => {
+        if (reqRef.current !== reqId) return;
+        setText(fallback ?? (lang === "bn"
+          ? "ব্যাখ্যা পাওয়া যায়নি। মানব পর্যালোচনা প্রয়োজন।"
+          : "Explanation unavailable. Human review recommended."));
+        setSource("fallback");
+      })
+      .finally(() => {
+        if (reqRef.current === reqId) setLoading(false);
+      });
+  }, [alertId, lang, fallback]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, height: 0, marginTop: 0 }}
+      animate={{ opacity: 1, height: "auto", marginTop: 8 }}
+      exit={{ opacity: 0, height: 0, marginTop: 0 }}
+      className="overflow-hidden"
+    >
+      {loading ? (
+        <div className="space-y-1.5 animate-pulse">
+          <div className="h-3 rounded-sm w-full" style={{ backgroundColor: "var(--bv-surface-high)" }} />
+          <div className="h-3 rounded-sm w-4/5" style={{ backgroundColor: "var(--bv-surface-high)" }} />
+        </div>
+      ) : (
+        <div className="space-y-1">
+          <p className="text-body-sm text-primary leading-relaxed">{text}</p>
+          {source && (
+            <span
+              className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-label-sm"
+              style={{
+                backgroundColor:
+                  source === "groq"
+                    ? "color-mix(in srgb, var(--bv-brand) 12%, transparent)"
+                    : "color-mix(in srgb, var(--bv-text-secondary) 12%, transparent)",
+                color:
+                  source === "groq"
+                    ? "var(--bv-brand)"
+                    : "var(--bv-text-secondary)",
+              }}
+            >
+              {source === "groq" ? "AI" : "Auto"}
+            </span>
+          )}
+        </div>
+      )}
+    </motion.div>
+  );
+}
 
 // ─── Baseline vs Observed comparison ─────────────────────────────────────────
 
@@ -277,22 +366,41 @@ function ActiveCasesStrip({
 
 // ─── Alert card ───────────────────────────────────────────────────────────────
 
+const LANG_OPTS: { value: ExplainLang; label: string }[] = [
+  { value: "en", label: "EN" },
+  { value: "bn", label: "বাংলা" },
+  { value: "banglish", label: "Banglish" },
+];
+
 function AlertCard({
   alert,
   hasCase,
   onOpen,
+  feedStatus,
 }: {
   alert: Alert;
   hasCase: boolean;
   onOpen: () => void;
+  feedStatus?: ProviderFeedStatus;
 }) {
-  const [lang, setLang] = useState<"en" | "bn">("en");
+  // Initialise from session storage; hydrated on first client render.
+  const [lang, setLangState] = useState<ExplainLang>("en");
+  useEffect(() => { setLangState(getSessionLang()); }, []);
+
+  function handleLang(l: ExplainLang) {
+    setLangState(l);
+    setSessionLang(l);
+  }
+
   const sv = severityStyle(alert.severity);
-  const banglaText = BANGLA[alert.id];
+  const rawConf = Math.round(alert.confidence * 100);
+  const adjConf = feedStatus
+    ? Math.round(alert.confidence * feedStatus.confidence_modifier * 100)
+    : rawConf;
+  const confDegraded = feedStatus && adjConf < rawConf;
 
   return (
     <motion.div
-      layout
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       className="bg-surface border border-default rounded-lg shadow-card overflow-hidden"
@@ -333,14 +441,23 @@ function AlertCard({
         <div className="flex items-start justify-between gap-3">
           <p className={`text-title-sm ${sv.textClass}`}>{alert.label}</p>
           <span className="text-label-sm text-secondary shrink-0 tabular-nums-bv">
-            {Math.round(alert.confidence * 100)}% conf.
+            {confDegraded ? (
+              <>
+                <span className="text-warning">⚠ ~{adjConf}%</span>
+                {" "}
+                <span className="line-through opacity-50">{rawConf}%</span>
+                {" conf."}
+              </>
+            ) : (
+              <>{rawConf}% conf.</>
+            )}
           </span>
         </div>
 
         {/* Provider / pool */}
         <p className="text-body-sm text-tertiary">{poolLabel(alert)}</p>
 
-        {/* Evidence (evidence-first) */}
+        {/* Evidence (evidence-first — authoritative, unchanged) */}
         <div>
           <p className="text-label-sm text-secondary mb-1.5">Evidence</p>
           <ul className="space-y-1">
@@ -359,29 +476,23 @@ function AlertCard({
           <ComparisonRows baseline={alert.baseline} observed={alert.observed} />
         </div>
 
-        {/* Bottom row: lang toggle + view details */}
+        {/* Bottom row: lang toggle (3 options) + view details */}
         <div className="flex items-center justify-between gap-2 pt-1 border-t border-default">
           <div className="flex items-center gap-1">
-            <button
-              onClick={() => setLang("en")}
-              className={`px-2.5 py-0.5 rounded-pill text-label-sm transition-colors ${
-                lang === "en"
-                  ? "bg-brand text-on-brand"
-                  : "bg-surface-high text-secondary hover:text-primary"
-              }`}
-            >
-              EN
-            </button>
-            <button
-              onClick={() => setLang("bn")}
-              className={`px-2.5 py-0.5 rounded-pill text-label-sm transition-colors ${
-                lang === "bn"
-                  ? "bg-brand text-on-brand"
-                  : "bg-surface-high text-secondary hover:text-primary"
-              }`}
-            >
-              বাং
-            </button>
+            {LANG_OPTS.map(({ value, label }) => (
+              <button
+                key={value}
+                onClick={() => handleLang(value)}
+                aria-pressed={lang === value}
+                className={`px-2.5 py-1 rounded-pill text-label-sm transition-colors duration-fast ${
+                  lang === value
+                    ? "bg-brand text-on-brand"
+                    : "bg-surface-high text-secondary hover:text-primary"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
           <button
             onClick={onOpen}
@@ -392,18 +503,16 @@ function AlertCard({
           </button>
         </div>
 
-        {/* Bangla line (animated, phase-3 static template) */}
+        {/* Compact explanation — powered by /api/explain (Phase 6).
+            Falls back to static STATIC_BANGLA template; never goes blank. */}
         <AnimatePresence>
-          {lang === "bn" && banglaText && (
-            <motion.p
-              key="bangla"
-              initial={{ opacity: 0, height: 0, marginTop: 0 }}
-              animate={{ opacity: 1, height: "auto", marginTop: 8 }}
-              exit={{ opacity: 0, height: 0, marginTop: 0 }}
-              className={`text-body-md font-medium overflow-hidden ${sv.textClass}`}
-            >
-              {banglaText}
-            </motion.p>
+          {lang !== "en" && (
+            <CompactExplain
+              key={`${alert.id}-${lang}`}
+              alertId={alert.id}
+              lang={lang}
+              fallback={lang === "bn" ? STATIC_BANGLA[alert.id] : undefined}
+            />
           )}
         </AnimatePresence>
       </div>
@@ -418,11 +527,13 @@ function AlertDetailDrawer({
   case_,
   onClose,
   onCaseUpdate,
+  feedStatus,
 }: {
   alert: Alert | null;
   case_: Case | null;
   onClose: () => void;
   onCaseUpdate: (updated: Case) => void;
+  feedStatus?: ProviderFeedStatus;
 }) {
   return (
     <AnimatePresence>
@@ -447,6 +558,7 @@ function AlertDetailDrawer({
             exit={{ x: "100%" }}
             transition={{ type: "spring", damping: 30, stiffness: 280 }}
             className="fixed right-0 top-0 h-full w-full max-w-md bg-surface border-l border-default z-50 overflow-y-auto"
+            data-lenis-prevent
           >
             {/* Sticky header */}
             <div className="sticky top-0 bg-surface border-b border-default px-4 py-3 flex items-center justify-between gap-3">
@@ -489,21 +601,33 @@ function AlertDetailDrawer({
                     : ""}
                   {poolLabel(alert)} · {fmtTime(alert.ts)}
                 </p>
-                {BANGLA[alert.id] && (
-                  <p
-                    className={`text-body-md mt-2 font-medium ${severityStyle(alert.severity).textClass}`}
-                  >
-                    {BANGLA[alert.id]}
-                  </p>
-                )}
               </div>
+
+              {/* Phase 6 — Explanation block (sits alongside evidence, never replaces it) */}
+              <ExplanationBlock
+                kind="alert"
+                id={alert.id}
+                initialFallback={STATIC_BANGLA[alert.id]}
+              />
 
               {/* Confidence */}
               <div className="bg-surface-high rounded-lg p-3 space-y-3">
                 <div className="flex items-center justify-between">
                   <p className="text-label-sm text-secondary">Confidence</p>
                   <span className="text-title-sm tabular-nums-bv">
-                    {Math.round(alert.confidence * 100)}%
+                    {feedStatus ? (
+                      <>
+                        <span className="text-warning">
+                          ⚠ ~{Math.round(alert.confidence * feedStatus.confidence_modifier * 100)}%
+                        </span>
+                        {" "}
+                        <span className="text-tertiary line-through text-label-sm">
+                          {Math.round(alert.confidence * 100)}%
+                        </span>
+                      </>
+                    ) : (
+                      <>{Math.round(alert.confidence * 100)}%</>
+                    )}
                   </span>
                 </div>
                 {alert.confidence_factors && (
@@ -579,13 +703,16 @@ function AlertDetailDrawer({
 export function AlertFeed({
   alerts,
   context,
-  initialCases = [],
+  cases,
+  onCaseUpdate,
+  feedStatuses = {},
 }: {
   alerts: Alert[];
   context: AlertContext | null;
-  initialCases?: Case[];
+  cases: Case[];
+  onCaseUpdate: (updated: Case) => void;
+  feedStatuses?: Partial<Record<Provider, ProviderFeedStatus>>;
 }) {
-  const [cases, setCases] = useState<Case[]>(initialCases);
   const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
 
   const sv = worstSeverity(alerts);
@@ -595,12 +722,6 @@ export function AlertFeed({
     selectedAlert?.case_id
       ? (cases.find((c) => c.id === selectedAlert.case_id) ?? null)
       : null;
-
-  function handleCaseUpdate(updated: Case) {
-    setCases((prev) =>
-      prev.map((c) => (c.id === updated.id ? updated : c))
-    );
-  }
 
   function handleOpenAlert(alert: Alert) {
     setSelectedAlert(alert);
@@ -650,6 +771,7 @@ export function AlertFeed({
                 alert={alert}
                 hasCase={!!alert.case_id}
                 onOpen={() => handleOpenAlert(alert)}
+                feedStatus={alert.provider ? feedStatuses[alert.provider] : undefined}
               />
             ))}
           </div>
@@ -661,7 +783,12 @@ export function AlertFeed({
         alert={selectedAlert}
         case_={selectedCase}
         onClose={() => setSelectedAlert(null)}
-        onCaseUpdate={handleCaseUpdate}
+        onCaseUpdate={onCaseUpdate}
+        feedStatus={
+          selectedAlert?.provider
+            ? feedStatuses[selectedAlert.provider]
+            : undefined
+        }
       />
     </>
   );

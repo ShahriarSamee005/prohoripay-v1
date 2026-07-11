@@ -90,6 +90,21 @@ export interface TransactionsResponse {
 
 export type TrendDirection = "accelerating" | "steady" | "easing" | "filling";
 
+/**
+ * Describes how the forecast engine classified this pool's outlook.
+ * - "projected"        — drain model produced a depletion estimate.
+ * - "filling"          — net inflow; no shortage projected (safe/calm).
+ * - "insufficient_data"— too few transactions to build a confident model.
+ * - "intermittent"     — clumpy/bursty activity; model confidence is reduced.
+ * - "at_floor"         — balance is at or below the safety floor.
+ */
+export type ProjectionState =
+  | "projected"
+  | "filling"
+  | "insufficient_data"
+  | "intermittent"
+  | "at_floor";
+
 export interface HistoryPoint {
   ts: string;      // ISO-8601 UTC
   balance: number; // integer BDT
@@ -108,15 +123,17 @@ export interface Forecast {
   pool_id: PoolId;
   current_balance: number;
   burn_rate_per_min: number;
-  /** null when trend is "filling" — no shortage projected */
+  /** null when projection_state is "filling", "insufficient_data", or "intermittent" */
   minutes_to_depletion: number | null;
-  /** null when trend is "filling" */
+  /** null when projection_state is not "projected" */
   projected_depletion_ts: string | null;
   /** BDT balance below which operations are constrained */
   safety_floor: number;
   confidence: number; // 0–1
   confidence_factors: ConfidenceFactors;
   trend: TrendDirection;
+  /** Classification of the forecast outlook — drives display state. */
+  projection_state: ProjectionState;
   recommended_action: string;
   evidence: string[];
   history: HistoryPoint[];
@@ -230,4 +247,92 @@ export interface CasesResponse {
 export interface CaseActionBody {
   actor: string;
   note: string;
+}
+
+// ─── Phase 6 — Natural-language explanation (Groq) ───────────────────────────
+
+export type ExplainKind = "forecast" | "alert";
+export type ExplainLang = "en" | "bn" | "banglish";
+
+export interface ExplainRequest {
+  kind: ExplainKind;
+  id: string;
+  lang: ExplainLang;
+}
+
+/** POST /api/explain → ExplainResponse */
+export interface ExplainResponse {
+  text: string;
+  lang: ExplainLang;
+  /** "groq" = LLM-generated; "fallback" = deterministic template. Always shown. */
+  source: "groq" | "fallback";
+  kind: ExplainKind;
+  id: string;
+}
+
+// ─── Phase 5 — SSE event payloads ─────────────────────────────────────────────
+
+export interface SimTickEvent {
+  sim_time: string;
+  tick: number;
+}
+
+export interface BalanceUpdateEvent {
+  pools: Pool[];
+  meta: Meta;
+}
+
+export interface ForecastUpdateEvent {
+  forecasts: Forecast[];
+  meta: Meta;
+}
+
+export interface AlertNewEvent {
+  alert: Alert;
+}
+
+export interface CaseUpdateEvent {
+  case: Case;
+}
+
+export interface FeedStatusEvent {
+  provider: Provider;
+  data_quality: "ok" | "degraded" | "stale";
+  confidence_modifier: number;
+}
+
+/** Tracked per-provider from feed_status SSE events. */
+export interface ProviderFeedStatus {
+  data_quality: "degraded" | "stale";
+  confidence_modifier: number;
+}
+
+// ─── Phase 5 — sim control request/response shapes ────────────────────────────
+
+export interface SimStartBody {
+  speed?: number;
+}
+
+export interface SimEidRushBody {
+  provider: PoolId;
+  intensity: "low" | "medium" | "high";
+}
+
+export interface SimInjectAnomalyBody {
+  provider: Provider;
+  type: AnomalyType;
+}
+
+export interface SimBreakFeedBody {
+  provider: Provider;
+  mode: "stale" | "degraded";
+}
+
+export interface SimRestoreFeedBody {
+  provider: Provider;
+}
+
+export interface SimControlResponse {
+  ok: boolean;
+  applied: string;
 }

@@ -1,6 +1,7 @@
-import type { Forecast, ConfidenceFactors, Meta } from "@/lib/types";
+import type { Forecast, ConfidenceFactors, Meta, ProjectionState } from "@/lib/types";
 import { BurnDownChart } from "./burn-down-chart";
 import { DataQualityBanner } from "./data-quality-banner";
+import { ExplanationBlock } from "./explanation-block";
 
 // ── Trend configuration ───────────────────────────────────────────────────────
 
@@ -120,6 +121,115 @@ function ConfidenceDetail({
   );
 }
 
+// ── Projection-state display ──────────────────────────────────────────────────
+
+function DepletionSection({ forecast }: { forecast: Forecast }) {
+  const { projection_state, minutes_to_depletion, projected_depletion_ts, confidence, confidence_factors } = forecast;
+
+  if (projection_state === "projected" && minutes_to_depletion != null && projected_depletion_ts != null) {
+    return (
+      <div className="flex flex-col gap-2">
+        <p className="text-label-sm text-secondary uppercase tracking-wide">Estimated depletion</p>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <p className="text-display-sm tabular-nums-bv text-danger leading-none">
+              ~{minutes_to_depletion} min
+            </p>
+            <p className="text-body-sm text-secondary tabular-nums-bv mt-1">
+              projected {fmtDepletionTime(projected_depletion_ts)}
+            </p>
+          </div>
+          <ConfidenceDetail confidence={confidence} factors={confidence_factors} />
+        </div>
+      </div>
+    );
+  }
+
+  if (projection_state === "filling") {
+    return (
+      <div className="flex flex-col gap-2">
+        <p className="text-label-sm text-secondary uppercase tracking-wide">Estimated depletion</p>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <p className="text-title-lg text-success">
+            Balance stable or growing — no shortage projected
+          </p>
+          <ConfidenceDetail confidence={confidence} factors={confidence_factors} />
+        </div>
+      </div>
+    );
+  }
+
+  if (projection_state === "insufficient_data" || projection_state === "intermittent") {
+    const detail =
+      projection_state === "insufficient_data"
+        ? "Too few transactions to build a reliable drain model."
+        : "Activity is clumpy or bursty — drain rate estimate is unreliable.";
+    return (
+      <div className="flex flex-col gap-2">
+        <p className="text-label-sm text-secondary uppercase tracking-wide">Estimated depletion</p>
+        <div
+          className="rounded-lg px-4 py-3 flex flex-col gap-2 border"
+          style={{
+            background: "color-mix(in srgb, var(--bv-warning) 8%, transparent)",
+            borderColor: "color-mix(in srgb, var(--bv-warning) 30%, transparent)",
+          }}
+        >
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-2">
+              <span
+                className="text-label-sm font-medium"
+                style={{ color: "var(--bv-warning)" }}
+                aria-hidden="true"
+              >
+                ◐
+              </span>
+              <p className="text-title-md" style={{ color: "var(--bv-warning)" }}>
+                Monitoring — limited{projection_state === "intermittent" ? "/intermittent" : ""} activity
+              </p>
+            </div>
+            <ConfidenceDetail confidence={confidence} factors={confidence_factors} />
+          </div>
+          <p className="text-body-sm text-secondary">{detail}</p>
+          <p
+            className="text-label-sm"
+            style={{ color: "var(--bv-warning)" }}
+          >
+            Low confidence — no reliable depletion estimate available
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (projection_state === "at_floor") {
+    return (
+      <div className="flex flex-col gap-2">
+        <p className="text-label-sm text-secondary uppercase tracking-wide">Estimated depletion</p>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <p className="text-title-lg text-danger">Balance at or below safety floor</p>
+            <p className="text-body-sm text-secondary mt-1">
+              Operations may be constrained — review immediately
+            </p>
+          </div>
+          <ConfidenceDetail confidence={confidence} factors={confidence_factors} />
+        </div>
+      </div>
+    );
+  }
+
+  // Fallback for any future projection_state value
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-label-sm text-secondary uppercase tracking-wide">Estimated depletion</p>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <p className="text-body-md text-secondary">No depletion estimate available</p>
+        <ConfidenceDetail confidence={confidence} factors={confidence_factors} />
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 interface ForecastPanelProps {
@@ -128,10 +238,6 @@ interface ForecastPanelProps {
 }
 
 export function ForecastPanel({ forecast, meta }: ForecastPanelProps) {
-  const hasDepletion =
-    forecast.minutes_to_depletion != null &&
-    forecast.projected_depletion_ts != null;
-
   return (
     <section className="flex flex-col gap-3">
       {/* Section header + trend chip */}
@@ -144,39 +250,8 @@ export function ForecastPanel({ forecast, meta }: ForecastPanelProps) {
       <DataQualityBanner meta={meta} />
 
       <div className="bg-surface border border-default rounded-xl shadow-card p-5 flex flex-col gap-5">
-        {/* ── Countdown + confidence ── */}
-        <div className="flex flex-col gap-2">
-          <p className="text-label-sm text-secondary uppercase tracking-wide">
-            Estimated depletion
-          </p>
-          {hasDepletion ? (
-            <div className="flex items-start justify-between gap-4 flex-wrap">
-              <div>
-                <p className="text-display-sm tabular-nums-bv text-danger leading-none">
-                  ~{forecast.minutes_to_depletion} min
-                </p>
-                <p className="text-body-sm text-secondary tabular-nums-bv mt-1">
-                  projected{" "}
-                  {fmtDepletionTime(forecast.projected_depletion_ts!)}
-                </p>
-              </div>
-              <ConfidenceDetail
-                confidence={forecast.confidence}
-                factors={forecast.confidence_factors}
-              />
-            </div>
-          ) : (
-            <div className="flex items-start justify-between gap-4 flex-wrap">
-              <p className="text-title-lg text-success">
-                Balance stable or growing — no shortage projected
-              </p>
-              <ConfidenceDetail
-                confidence={forecast.confidence}
-                factors={forecast.confidence_factors}
-              />
-            </div>
-          )}
-        </div>
+        {/* ── Projection state — countdown / safe / low-confidence / at-floor ── */}
+        <DepletionSection forecast={forecast} />
 
         {/* ── Burn-down chart ── */}
         <BurnDownChart forecast={forecast} />
@@ -190,7 +265,7 @@ export function ForecastPanel({ forecast, meta }: ForecastPanelProps) {
           </p>
         </div>
 
-        {/* ── Evidence ── */}
+        {/* ── Evidence (authoritative — unchanged) ── */}
         <div className="flex flex-col gap-2">
           <p className="text-label-sm text-secondary">Evidence</p>
           <ul className="flex flex-col gap-1.5" role="list">
@@ -204,6 +279,9 @@ export function ForecastPanel({ forecast, meta }: ForecastPanelProps) {
             ))}
           </ul>
         </div>
+
+        {/* ── Phase 6 — Plain-language explanation (additive; sits alongside evidence) ── */}
+        <ExplanationBlock kind="forecast" id={forecast.pool_id} />
       </div>
     </section>
   );
