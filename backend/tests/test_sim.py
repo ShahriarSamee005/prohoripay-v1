@@ -104,6 +104,58 @@ def test_eid_rush_drives_liquidity_alert(clock):
         assert liq[-1].provider is None
 
 
+def test_stop_eid_rush_halts_the_surge(clock):
+    """stop_eid_rush ends the active surge so no further eid_rush cash-out fires."""
+    from app.core.models import Transaction
+
+    def eid_txn_count() -> int:
+        with Session(clock.engine) as session:
+            return sum(
+                1 for t in session.exec(select(Transaction)).all()
+                if t.event_flag == "eid_rush"
+            )
+
+    counts: dict[str, int] = {}
+
+    async def go():
+        clock.eid_rush(intensity="high")
+        await clock.tick()               # surge active this tick
+        counts["after_first"] = eid_txn_count()
+        clock.stop_eid_rush()
+        assert clock._eid_ticks == 0     # surge disarmed immediately
+        for _ in range(3):               # remaining EID_RUSH_TICKS would still be armed
+            await clock.tick()
+        counts["after_stop"] = eid_txn_count()
+
+    _run(go())
+    # The pre-stop tick produced eid_rush traffic; stopping means no more is added.
+    assert counts["after_first"] > 0
+    assert counts["after_stop"] == counts["after_first"]
+
+
+def test_eid_rush_never_drives_physical_cash_below_safety_floor(clock):
+    """Sustained eid_rush must NOT push shared physical cash negative — an agent
+    cannot disburse cash it does not have, so the balance stops at the reserve.
+    """
+    from app.core.enums import PoolId
+    from app.core.models import Pool
+    from app.modules.forecast.config import safety_floor_for
+
+    floor = safety_floor_for(PoolId.physical_cash.value)
+
+    async def go():
+        clock.eid_rush(intensity="high")
+        for _ in range(12):          # far more ticks than it takes to hit the floor
+            await clock.tick()
+
+    _run(go())
+    with Session(clock.engine) as session:
+        phys = session.get(Pool, PoolId.physical_cash.value)
+        assert phys.current_balance >= floor, (
+            f"physical cash {phys.current_balance} dropped below floor {floor}"
+        )
+
+
 # ------------------------------------------------------------- inject_anomaly
 def test_inject_anomaly_creates_alert_and_case(clock):
     """inject_anomaly -> a matching anomaly alert + auto-created case, end to end."""

@@ -9,6 +9,7 @@ import {
   Pause,
   RotateCcw,
   Zap,
+  ZapOff,
   AlertTriangle,
   Radio,
   CheckCircle2,
@@ -21,6 +22,7 @@ import {
   simPause,
   simReset,
   simEidRush,
+  simStopEidRush,
   simInjectAnomaly,
   simBreakFeed,
   simRestoreFeed,
@@ -481,17 +483,26 @@ export function DemoControlPanel({
                   description="Simulate high-intensity cash-out pressure → triggers liquidity alert"
                   accent="var(--bv-danger)"
                 >
-                  <PillBtn
-                    label="Trigger Eid Rush"
-                    icon={<Zap className="size-3.5" />}
-                    variant="danger"
-                    loading={loading === "eid"}
-                    onClick={() =>
-                      run("eid", () =>
-                        simEidRush({ provider: "physical_cash", intensity: "high" })
-                      )
-                    }
-                  />
+                  <div className="flex flex-wrap gap-2">
+                    <PillBtn
+                      label="Trigger Eid Rush"
+                      icon={<Zap className="size-3.5" />}
+                      variant="danger"
+                      loading={loading === "eid"}
+                      onClick={() =>
+                        run("eid", () =>
+                          simEidRush({ provider: "physical_cash", intensity: "high" })
+                        )
+                      }
+                    />
+                    <PillBtn
+                      label="Stop Eid Rush"
+                      icon={<ZapOff className="size-3.5" />}
+                      variant="ghost"
+                      loading={loading === "eid-stop"}
+                      onClick={() => run("eid-stop", simStopEidRush)}
+                    />
+                  </div>
                 </ScenarioCard>
 
                 {/* Scenario B */}

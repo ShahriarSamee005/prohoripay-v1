@@ -89,6 +89,14 @@ async def sim_eid_rush(body: EidRushRequest | None = None) -> ControlResponse:
     return _ok(applied)
 
 
+@router.post("/sim/eid_rush/stop", response_model=ControlResponse)
+async def sim_stop_eid_rush() -> ControlResponse:
+    clock = get_clock()
+    applied = clock.stop_eid_rush()
+    await clock.flush_and_publish()
+    return _ok(applied)
+
+
 @router.post("/sim/inject_anomaly", response_model=ControlResponse)
 async def sim_inject_anomaly(body: InjectAnomalyRequest | None = None) -> ControlResponse:
     body = body or InjectAnomalyRequest()

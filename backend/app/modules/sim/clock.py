@@ -18,8 +18,9 @@ from sqlmodel import Session, select
 
 from app.common.meta import make_meta
 from app.core.effects import build_pool_effects
-from app.core.enums import Provider, PoolStatus, TxnStatus
+from app.core.enums import PoolId, Provider, PoolStatus, TxnStatus
 from app.core.models import Alert, Pool, Transaction
+from app.modules.forecast.config import safety_floor_for
 from app.core.seed import seed_database
 from app.modules.alerts.config import MATCH_FRACTION
 from app.modules.alerts.service import compute_alert_dicts, get_alerts
@@ -139,6 +140,13 @@ class SimulationClock:
         self._eid_intensity = intensity if intensity in cfg.EID_INTENSITY_COUNT else "high"
         return (f"eid_rush ({self._eid_intensity}) for {cfg.EID_RUSH_TICKS} ticks — "
                 "sustained cash-out pressure on physical cash")
+
+    def stop_eid_rush(self) -> str:
+        """End any active eid_rush surge immediately (baseline traffic resumes)."""
+        was_active = self._eid_ticks > 0
+        self._eid_ticks = 0
+        return ("eid_rush stopped — cash-out pressure cleared, baseline traffic resumes"
+                if was_active else "no active eid_rush to stop")
 
     def inject_anomaly(self, provider: str = "rocket",
                        type: str = cfg.DEFAULT_INJECT_TYPE) -> str:
@@ -266,9 +274,24 @@ class SimulationClock:
         pools = {p.pool_id: p for p in session.exec(select(Pool)).all()}
         agent = synth_cfg.AGENTS[0]
 
+        cash_pool = pools.get(PoolId.physical_cash.value)
+        cash_floor = safety_floor_for(PoolId.physical_cash.value)
+
         added: list[Transaction] = []
         for r in raws:
             effects = build_pool_effects(r.txn_type, Provider(r.provider), r.amount)
+            # An agent cannot disburse cash it does not have: a cash_out that would
+            # take shared physical cash below its safety reserve is not completed.
+            # Skip it entirely so the balance stops at the floor (never negative)
+            # and the accounting invariant (balance == opening + Σ effects) holds.
+            if cash_pool is not None:
+                cash_delta = next(
+                    (int(e["delta"]) for e in effects
+                     if e["pool_id"] == PoolId.physical_cash.value),
+                    0,
+                )
+                if cash_delta < 0 and cash_pool.current_balance + cash_delta < cash_floor:
+                    continue
             for eff in effects:  # apply signed, pool-specific balance movement
                 pool = pools.get(eff["pool_id"])
                 if pool is not None:

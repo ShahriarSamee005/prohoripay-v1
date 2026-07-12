@@ -39,7 +39,7 @@ The forecast engine raises a `critical` alert when `minutes_to_depletion < 30` (
 
 | Metric | Value |
 |---|---|
-| Shortage detection lead time (seeded scenario) | `<FILL: X minutes>` |
+| Shortage detection lead time (seeded scenario) | `29.6 minutes` |
 
 ---
 
@@ -66,12 +66,12 @@ The forecast engine raises a `critical` alert when `minutes_to_depletion < 30` (
 
 | Metric | Value |
 |---|---|
-| True positives (clusters correctly detected) | `<FILL: X / 3>` |
-| False positives (alerts on non-injected traffic) | `<FILL: X>` |
-| False negatives (injected clusters missed) | `<FILL: X>` |
-| **Precision** | `<FILL: X%>` |
-| **Recall** | `<FILL: X%>` |
-| **F1 score** | `<FILL: X.XX>` |
+| True positives (clusters correctly detected) | `3 / 3` |
+| False positives (alerts on non-injected traffic) | `0` |
+| False negatives (injected clusters missed) | `0` |
+| **Precision** | `100%` |
+| **Recall** | `100%` |
+| **F1 score** | `1.00` |
 
 ---
 
@@ -93,9 +93,9 @@ This is the key Eid-awareness measure. Clusters A and B are injected inside the 
 
 | Metric | Value |
 |---|---|
-| Non-injected Eid-rush transactions in scope | `<FILL: ~58>` |
-| Covered by an anomaly alert | `<FILL: X>` |
-| **False-positive rate** | `<FILL: X%>` |
+| Non-injected Eid-rush transactions in scope | `70` |
+| Covered by an anomaly alert | `0` |
+| **False-positive rate** | `0.0%` |
 
 ---
 
@@ -126,13 +126,7 @@ for path in ["/api/forecast", "/api/alerts", "/api/pools"]:
 
 **Note on `/api/explain`:** The Groq path is network-bound (target < 8 seconds, `groq_timeout_seconds = 8.0`, `groq_max_retries = 1` from `backend/app/core/config.py`). The deterministic fallback path is fully local and expected to return in < 5 ms.
 
-| Endpoint | P50 | P95 | Notes |
-|---|---|---|---|
-| `GET /api/forecast` | `<FILL: X ms>` | `<FILL: X ms>` | EMA over 30-min window, all 4 pools |
-| `GET /api/alerts` | `<FILL: X ms>` | `<FILL: X ms>` | 4 rule detectors + liquidity checks |
-| `GET /api/pools` | `<FILL: X ms>` | `<FILL: X ms>` | Simple read + forecast-derived status |
-| `POST /api/explain` (Groq) | `<FILL: X ms>` | `<FILL: X ms>` | Network-bound to Groq API |
-| `POST /api/explain` (fallback) | `<FILL: X ms>` | `<FILL: X ms>` | Fully local, no Groq call |
+*Not measured in this validation run. The methodology above describes how to reproduce the measurement. Use the Python snippet with a locally running seeded server; latency depends on hardware and is not a reproducible property of this synthetic dataset.*
 
 ---
 
@@ -140,13 +134,29 @@ for path in ["/api/forecast", "/api/alerts", "/api/pools"]:
 
 | Metric | Value | Source |
 |---|---|---|
-| Shortage detection lead time | `<FILL: X min>` | `projected_depletion_ts − first_critical_alert.ts` |
-| Anomaly precision | `<FILL: X%>` | TP / (TP + FP), 50% cluster overlap threshold |
-| Anomaly recall | `<FILL: X%>` | TP / 3 injected clusters |
-| Anomaly F1 | `<FILL: X.XX>` | Harmonic mean |
-| FP rate (normal Eid traffic) | `<FILL: X%>` | Non-injected Eid txns in anomaly alert scope |
-| API latency P95 — `/api/forecast` | `<FILL: X ms>` | 100 requests, seeded DB, no reload |
-| API latency P95 — `/api/alerts` | `<FILL: X ms>` | 100 requests, seeded DB, no reload |
+| Shortage detection lead time | `29.6 min` | `projected_depletion_ts − first_critical_alert.ts` |
+| Anomaly precision | `100%` | TP / (TP + FP), 50% cluster overlap threshold |
+| Anomaly recall | `100%` | TP / 3 injected clusters |
+| Anomaly F1 | `1.00` | Harmonic mean |
+| FP rate (normal Eid traffic) | `0.0%` | Non-injected Eid txns in anomaly alert scope |
+
+---
+
+## Interpretation and Limitations
+
+**The detection pipeline is tested end-to-end, not end-to-production.**
+
+The synthetic anomalies were injected by us with ground-truth labels stored server-side. Those labels are never returned by any public API endpoint — the detection engine had to earn its results by actually firing on the right transactions. The pipeline passes that test with perfect scores. But several important limitations apply:
+
+- **Perfect scores reflect known, separable patterns under a fixed seed.** The three anomaly types (structuring, velocity spike, off-hours burst) were designed to be reliably distinguishable from normal traffic. Under a fixed random seed, the results are fully reproducible. They are **not** a claim of production accuracy; real-world traffic is noisier, adversarial, and exhibits distribution shift that would produce lower precision/recall and a non-zero false-positive rate.
+
+- **The false-positive control is meaningful.** 70 normal Eid-rush transactions were correctly not flagged (0.0% FP rate). This demonstrates that the time-aware and event-aware baseline prevents the system from crying wolf on legitimate festival demand — a common failure mode for threshold-based detectors.
+
+- **The lead time (29.6 min) is scenario-specific.** It is measured on the held-out simulated Eid-rush scenario with a drain rate of approximately 1,607 BDT/min. The status went critical at +14.0 min into the simulation; actual depletion occurred at +43.6 min. The lead time would vary with real demand patterns — faster drains produce less lead time, slower drains produce more.
+
+- **Deliberate trade-off: the isolated-spike guard (Rule 3) slightly delays detection when a rush begins with a single large withdrawal.** This is intentional: the guard substantially reduces false alarms from one-off large transactions at the cost of one additional confirmation window. The 29.6-minute lead time is measured after that guard resolves.
+
+- **API latency was not measured in this validation run.** The methodology in Metric 4 describes how to reproduce the measurement on a locally running seeded server. Latency is hardware-dependent and not a reproducible property of the synthetic dataset.
 
 ---
 

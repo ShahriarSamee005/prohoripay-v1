@@ -196,6 +196,9 @@ export const simReset = () =>
 export const simEidRush = (body: SimEidRushBody) =>
   simPost("/api/sim/eid_rush", body);
 
+export const simStopEidRush = () =>
+  simPost("/api/sim/eid_rush/stop");
+
 export const simInjectAnomaly = (body: SimInjectAnomalyBody) =>
   simPost("/api/sim/inject_anomaly", body);
 

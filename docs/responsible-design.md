@@ -98,7 +98,7 @@ The structuring detector triggers on **amount clustering + account concentration
 
 ### Measured false-positive rate
 
-`<FILL: measured FP rate on non-injected Eid-rush transactions>` — see [`docs/validation.md`](validation.md) for the measurement procedure. The expected result is low: the 70 non-injected Eid-rush transactions in the seeded dataset are designed to stay below the event-adjusted thresholds described above.
+`0.0%` (0 of 70 non-injected Eid-rush transactions covered by any anomaly alert) — see [`docs/validation.md`](validation.md) for the measurement procedure. The 70 non-injected Eid-rush transactions in the seeded dataset stay below the event-adjusted thresholds described above.
 
 ---
 

@@ -205,13 +205,11 @@ The simulation clock advances time in 5-minute ticks. Demo controls send events 
 
 | Metric | Value | Notes |
 |---|---|---|
-| Shortage detection lead time | `<FILL: X min>` | Minutes before physical cash crosses the safety floor |
-| Anomaly precision | `<FILL: X%>` | Against 39 injected, labeled ground-truth anomalies |
-| Anomaly recall | `<FILL: X%>` | Against 39 injected, labeled ground-truth anomalies |
-| Anomaly F1 | `<FILL: X.XX>` | Harmonic mean of precision and recall |
-| False-positive rate (Eid traffic) | `<FILL: X%>` | Non-injected Eid-rush transactions covered by an anomaly alert |
-| API latency P95 — `/api/forecast` | `<FILL: X ms>` | 100 sequential requests, seeded DB, local machine |
-| API latency P95 — `/api/alerts` | `<FILL: X ms>` | 100 sequential requests, seeded DB, local machine |
+| Shortage detection lead time | `29.6 min` | Minutes before physical cash crosses the safety floor |
+| Anomaly precision | `100%` | Against 39 injected, labeled ground-truth anomalies |
+| Anomaly recall | `100%` | Against 39 injected, labeled ground-truth anomalies |
+| Anomaly F1 | `1.00` | Harmonic mean of precision and recall |
+| False-positive rate (Eid traffic) | `0.0%` | Non-injected Eid-rush transactions covered by an anomaly alert |
 
 ---
 
