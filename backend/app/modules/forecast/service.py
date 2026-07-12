@@ -56,6 +56,7 @@ class ForecastResult:
     trend: str                      # accelerating | easing | steady | filling
     status: PoolStatus
     confidence: float
+    safety_floor: int = 0
     # at_floor | insufficient_data | intermittent | filling | projected
     projection_state: str = "projected"
     confidence_factors: dict = field(default_factory=dict)
@@ -246,11 +247,12 @@ def _confidence(
     confidence = variance_factor * sample_factor * data_freshness
     confidence = max(0.0, min(1.0, confidence))
     factors = {
-        "variance_factor": round(variance_factor, 3),
-        "sample_factor": round(sample_factor, 3),
+        # Named to match the frontend ConfidenceFactors contract.
+        # volatility = share of confidence lost to variance (0 = steady, 1 = chaotic)
+        "volatility": round(1.0 - variance_factor, 3),
+        # sample_size here is the 0-1 normalized factor (not the raw count)
+        "sample_size": round(sample_factor, 3),
         "data_freshness": round(data_freshness, 3),
-        "sample_size": int(sample_size),
-        "coefficient_of_variation": round(cv, 3),
     }
     # Return UNROUNDED — the caller may apply a low-confidence penalty first and
     # rounds exactly once, so a small confidence never collides with itself.
@@ -507,6 +509,7 @@ def forecast_pool(
         trend=trend,
         status=status,
         confidence=confidence,
+        safety_floor=int(safety_floor),
         projection_state=projection_state,
         confidence_factors=factors,
         recommended_action=action,

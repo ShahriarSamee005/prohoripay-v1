@@ -60,7 +60,14 @@ function PoolRow({ pool, index }: { pool: Pool; index: number }) {
       </div>
       <div className="flex items-center gap-3 shrink-0">
         <p className="text-title-md tabular-nums-bv text-primary">
-          ৳{fmt(pool.balance)}
+          <motion.span
+            key={pool.balance}
+            initial={{ opacity: 0.5, y: -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            ৳{fmt(pool.balance)}
+          </motion.span>
         </p>
         <PoolStatusChip status={pool.status} />
       </div>

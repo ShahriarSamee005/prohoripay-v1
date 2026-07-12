@@ -12,6 +12,32 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
+# ---------------------------------------------------------------------------
+# Temporal seasonality profile — shared between the generator and the
+# time-aware anomaly detector. All values are relative multipliers;
+# 1.0 represents the peak (midday) volume.
+# ---------------------------------------------------------------------------
+
+# Intraday volume multipliers: hour of day -> relative volume weight.
+# Quiet overnight (0.02), morning ramp, peak 10–12 (1.0), evening taper.
+HOUR_MULTIPLIERS: dict[int, float] = {
+    0: 0.03, 1: 0.02, 2: 0.02, 3: 0.02, 4: 0.02, 5: 0.05,
+    6: 0.15, 7: 0.40, 8: 0.70, 9: 0.90, 10: 1.00, 11: 1.00,
+    12: 0.90, 13: 0.85, 14: 0.80, 15: 0.75, 16: 0.70, 17: 0.65,
+    18: 0.60, 19: 0.50, 20: 0.35, 21: 0.25, 22: 0.15, 23: 0.08,
+}
+
+# Salary-cycle multipliers: day of month -> relative volume weight.
+# Days 1–7 are elevated due to salary / bonus disbursements.
+DAY_OF_MONTH_MULTIPLIERS: dict[int, float] = {
+    **{d: 1.8 for d in range(1, 8)},    # salary week
+    **{d: 1.0 for d in range(8, 29)},   # normal days
+    **{d: 1.1 for d in range(29, 32)},  # month-end bump
+}
+
+# Festival uplift applied when the Eid window is active.
+FESTIVAL_MULTIPLIER: float = 2.5
+
 
 @dataclass(frozen=True)
 class AgentSpec:
@@ -49,7 +75,7 @@ AGENTS: tuple[AgentSpec, ...] = (
         name="Karim Store",
         area="Sylhet-Zindabazar",
         providers=("bkash", "nagad", "rocket"),
-        provider_openings={"bkash": 120_000, "nagad": 45_000, "rocket": 100_000},
+        provider_openings={"bkash": 2_500_000, "nagad": 1_200_000, "rocket": 1_800_000},
         physical_target_current=80_000,
     ),
 )
@@ -154,3 +180,49 @@ NORMAL_TRAFFIC = NormalTrafficSpec()
 # while the grown provider pools stay healthy.
 STATUS_CRITICAL_RATIO: float = 0.50
 STATUS_WATCH_RATIO: float = 0.80
+
+
+# ---------------------------------------------------------------------------
+# Salary-day stress scenario — the inverse of the Eid scenario.
+# Heavy cash-in during salary week drains the bKash provider float while
+# physical cash grows. The constraining pool is the provider, not physical cash.
+#
+# bKash opening (250_000) is calibrated so that the deterministic cash-in drain
+# (~150–210 k BDT with SALARY_DAY_SEED=2) always puts bKash below the 50%
+# critical threshold without driving the current balance negative.
+# ---------------------------------------------------------------------------
+
+SALARY_DAY_SEED: int = 2
+SALARY_DAY_REFERENCE_NOW: datetime = datetime(2026, 7, 1, 12, 0, 0)  # day 1 = salary day
+
+SALARY_DAY_AGENT: AgentSpec = AgentSpec(
+    id="AGENT_07",
+    name="Karim Store",
+    area="Sylhet-Zindabazar",
+    providers=("bkash", "nagad", "rocket"),
+    provider_openings={"bkash": 250_000, "nagad": 1_200_000, "rocket": 1_800_000},
+    physical_target_current=600_000,
+)
+
+
+@dataclass(frozen=True)
+class SalaryDayTrafficSpec:
+    """Volume/amount parameters for the salary-day stress scenario (cash-in heavy).
+
+    90% of transactions are cash-in, all routed through bKash (bkash_share=1.0)
+    so the bKash float is the sole drain target. Physical cash grows from the
+    same cash-ins, remaining healthy — demonstrating the inverse stress pattern.
+    """
+
+    count: int = 80            # total transactions during the salary window
+    start_sec: int = 7 * 3600  # 07:00 — salary window opens
+    end_sec: int = 10 * 3600   # 10:00 — salary window closes
+    cashin_share: float = 0.90  # heavy cash-in pressure (salary workers depositing)
+    cashout_amount: tuple[int, int] = (500, 1_000)
+    cashin_amount: tuple[int, int] = (2_000, 3_000)
+    bkash_share: float = 1.0   # all salary deposits through bKash
+    account_id_min: int = 2_000
+    account_id_max: int = 2_400
+
+
+SALARY_DAY_TRAFFIC = SalaryDayTrafficSpec()

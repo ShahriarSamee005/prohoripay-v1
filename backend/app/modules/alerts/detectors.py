@@ -228,20 +228,42 @@ def detect_velocity(txns: list[Txn], cfg: DetectorConfig = DEFAULT_DETECTOR_CONF
 
 # ------------------------------------------------------------------- off-hours
 def _in_quiet_hours(ts: datetime, cfg: DetectorConfig) -> bool:
+    """Legacy helper — kept for reference; detection now uses hour_multipliers."""
     return cfg.quiet_start_hour <= ts.hour < cfg.quiet_end_hour
 
 
 def detect_off_hours(txns: list[Txn], cfg: DetectorConfig = DEFAULT_DETECTOR_CONFIG) -> list[Finding]:
-    """High activity during typically-quiet hours with no known event to explain it."""
+    """Burst rate >> expected rate for this hour of day, with no known event to explain it.
+
+    The time-aware baseline replaces the static quiet-hour gate: the same burst
+    at 03:00 (multiplier 0.02) is flagged while the same volume at 14:00
+    (multiplier 0.80) is absorbed by the baseline and NOT flagged.  Evidence
+    always states the expected vs observed rate and the hour's multiplier.
+    """
     findings: list[Finding] = []
     for provider, items in _group_by_provider(txns).items():
-        quiet = [t for t in items if _in_quiet_hours(t["ts"], cfg) and active_event(t["ts"]) is None]
-        if len(quiet) < cfg.off_hours_min_count:
+        # Only consider transactions outside a known event window.
+        no_event = [t for t in items if active_event(t["ts"]) is None]
+        if len(no_event) < cfg.off_hours_min_count:
             continue
-        cluster = _densest_window(quiet, cfg.off_hours_window_minutes,
+        cluster = _densest_window(no_event, cfg.off_hours_window_minutes,
                                   cfg.off_hours_min_count, max_accounts=10_000)
         if not cluster:
             continue
+
+        # Expected rate at the START of the burst, from the seasonality profile.
+        hour = cluster[0]["ts"].hour
+        hour_mult = cfg.hour_multipliers.get(hour, 1.0)
+        expected_rate = cfg.off_hours_base_rate * hour_mult
+
+        span_min = max(1.0, _span_minutes(cluster))
+        observed_rate = len(cluster) / span_min
+
+        # Only flag when observed rate is far above the hour's expected rate.
+        if observed_rate < expected_rate * cfg.off_hours_relative_threshold:
+            continue
+
+        ratio = int(observed_rate / expected_rate) if expected_rate > 0 else 999
         accounts = _distinct_accounts(cluster)
         findings.append(Finding(
             anomaly_type="off_hours_burst",
@@ -250,11 +272,14 @@ def detect_off_hours(txns: list[Txn], cfg: DetectorConfig = DEFAULT_DETECTOR_CON
             evidence=[
                 f"{len(cluster)} transactions between {_fmt_hm(cluster[0]['ts'])} "
                 f"and {_fmt_hm(cluster[-1]['ts'])}",
-                f"outside typical active hours ({cfg.quiet_start_hour:02d}:00–{cfg.quiet_end_hour:02d}:00)",
+                f"expected ~{expected_rate:.3f} txn/min at hour {hour:02d}; "
+                f"observed {observed_rate:.2f}/min ({ratio}× expected)",
                 "no known event (festival / salary day) to explain the activity",
             ],
-            baseline={"expected_txns_in_quiet_hours": 0},
-            observed={"transactions": len(cluster), "distinct_accounts": len(accounts)},
+            baseline={"txn_per_min_expected": round(expected_rate, 4),
+                      "hour_multiplier": hour_mult},
+            observed={"txn_per_min": round(observed_rate, 2), "transactions": len(cluster),
+                      "distinct_accounts": len(accounts)},
             strength=min(1.0, 0.5 + 0.06 * len(cluster)),
             covered_txn_ids=[t["id"] for t in cluster],
             ts=cluster[-1]["ts"],

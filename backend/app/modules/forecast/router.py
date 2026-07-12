@@ -39,6 +39,7 @@ def _to_out(r: ForecastResult) -> ForecastOut:
         confidence=r.confidence,
         recommended_action=r.recommended_action,
         evidence=r.evidence,
+        safety_floor=r.safety_floor,
         status=r.status.value,
         trend=r.trend,
         projection_state=r.projection_state,

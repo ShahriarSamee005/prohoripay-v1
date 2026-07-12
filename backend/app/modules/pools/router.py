@@ -17,7 +17,7 @@ from app.core.db import get_session
 from app.core.enums import PoolId, PoolStatus
 from app.core.models import Pool
 from app.modules.forecast.service import pool_status_map
-from app.modules.pools.schemas import PoolOut, PoolsResponse
+from app.modules.pools.schemas import PatchCashBody, PatchCashResponse, PoolOut, PoolsResponse
 
 router = APIRouter(prefix="/api", tags=["pools"])
 
@@ -28,6 +28,32 @@ _POOL_ORDER = {
     PoolId.nagad.value: 2,
     PoolId.rocket.value: 3,
 }
+
+
+@router.patch("/pools/physical_cash", response_model=PatchCashResponse)
+def patch_physical_cash(
+    body: PatchCashBody,
+    session: Session = Depends(get_session),
+) -> PatchCashResponse:
+    """Human-recorded cash count.
+
+    Updates the physical cash pool balance to exactly the value the human
+    recorded. Advisory only — no transfer, no automatic action.
+    """
+    pool = session.get(Pool, PoolId.physical_cash.value)
+    if pool is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Physical cash pool not found")
+    pool.current_balance = body.balance
+    session.add(pool)
+    session.commit()
+    session.refresh(pool)
+    return PatchCashResponse(
+        ok=True,
+        pool_id=pool.pool_id,
+        balance=pool.current_balance,
+        note=body.note,
+    )
 
 
 @router.get("/pools", response_model=PoolsResponse)

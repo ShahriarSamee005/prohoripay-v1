@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronRight, Info, X } from "lucide-react";
 import type {
@@ -698,7 +698,84 @@ function AlertDetailDrawer({
   );
 }
 
+// ─── Severity summary bar ────────────────────────────────────────────────────
+
+function SeverityBar({ alerts }: { alerts: Alert[] }) {
+  const high = alerts.filter((a) => a.severity === "high").length;
+  const medium = alerts.filter((a) => a.severity === "medium").length;
+  const low = alerts.filter((a) => a.severity === "low").length;
+
+  const buckets = [
+    { label: "High", count: high, color: "var(--bv-danger)" },
+    { label: "Medium", count: medium, color: "var(--bv-warning)" },
+    { label: "Low", count: low, color: "var(--bv-info)" },
+  ].filter((b) => b.count > 0);
+
+  if (buckets.length === 0) return null;
+
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      {buckets.map((b) => (
+        <span
+          key={b.label}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-pill text-label-sm font-semibold"
+          style={{
+            background: `color-mix(in srgb, ${b.color} 14%, transparent)`,
+            color: b.color,
+            border: `1px solid color-mix(in srgb, ${b.color} 30%, transparent)`,
+          }}
+        >
+          <span
+            className="size-1.5 rounded-full"
+            style={{ backgroundColor: b.color }}
+          />
+          {b.count} {b.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ─── Tab button ───────────────────────────────────────────────────────────────
+
+function TabBtn({
+  active,
+  onClick,
+  children,
+  badge,
+  badgeColor,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  badge?: number;
+  badgeColor?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`relative flex items-center gap-1.5 px-3 py-2 rounded-lg text-label-md font-semibold transition-all duration-fast focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand ${
+        active
+          ? "bg-surface text-primary shadow-card"
+          : "text-secondary hover:text-primary hover:bg-surface/60"
+      }`}
+    >
+      {children}
+      {badge != null && badge > 0 && (
+        <span
+          className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-pill text-label-sm text-white tabular-nums-bv"
+          style={{ backgroundColor: badgeColor ?? "var(--bv-brand)" }}
+        >
+          {badge}
+        </span>
+      )}
+    </button>
+  );
+}
+
 // ─── Main export ──────────────────────────────────────────────────────────────
+
+type TabId = "alerts" | "cases" | "context";
 
 export function AlertFeed({
   alerts,
@@ -714,10 +791,11 @@ export function AlertFeed({
   feedStatuses?: Partial<Record<Provider, ProviderFeedStatus>>;
 }) {
   const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
+  const [activeTab, setActiveTab] = useState<TabId>("alerts");
 
   const sv = worstSeverity(alerts);
+  const activeCases = (cases ?? []).filter((c) => c.status !== "resolved");
 
-  // The case linked to the currently open alert drawer
   const selectedCase =
     selectedAlert?.case_id
       ? (cases.find((c) => c.id === selectedAlert.case_id) ?? null)
@@ -729,18 +807,18 @@ export function AlertFeed({
 
   return (
     <>
-      <section className="space-y-4" aria-label="Activity Alerts">
+      <section className="flex flex-col gap-3" aria-label="Activity Alerts">
         {/* Section header */}
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex items-start justify-between gap-3 px-1">
           <div>
-            <h2 className="text-headline-sm text-primary">Activity Alerts</h2>
+            <h2 className="text-headline-sm text-primary">Activity</h2>
             <p className="text-body-sm text-secondary">
               Unusual patterns · liquidity pressure · requires review
             </p>
           </div>
           {alerts.length > 0 && (
             <span
-              className="px-2.5 py-1 rounded-pill text-label-sm text-on-brand tabular-nums-bv shrink-0"
+              className="px-2.5 py-1 rounded-pill text-label-sm text-white tabular-nums-bv shrink-0"
               style={{ backgroundColor: severityStyle(sv).stripe }}
             >
               {alerts.length}
@@ -748,34 +826,113 @@ export function AlertFeed({
           )}
         </div>
 
-        {/* Active cases strip — resolved cases are excluded */}
-        <ActiveCasesStrip
-          cases={cases}
-          alerts={alerts}
-          onOpenAlert={handleOpenAlert}
-        />
+        {/* Tab bar */}
+        <div
+          className="flex items-center gap-1 p-1 rounded-xl"
+          style={{ backgroundColor: "var(--bv-surface-high)" }}
+        >
+          <TabBtn
+            active={activeTab === "alerts"}
+            onClick={() => setActiveTab("alerts")}
+            badge={alerts.length}
+            badgeColor={alerts.length > 0 ? severityStyle(sv).stripe : undefined}
+          >
+            Alerts
+          </TabBtn>
+          <TabBtn
+            active={activeTab === "cases"}
+            onClick={() => setActiveTab("cases")}
+            badge={activeCases.length}
+            badgeColor="var(--bv-warning)"
+          >
+            Cases
+          </TabBtn>
+          {context?.active_event && (
+            <TabBtn
+              active={activeTab === "context"}
+              onClick={() => setActiveTab("context")}
+            >
+              Context
+            </TabBtn>
+          )}
+        </div>
 
-        {/* Eid context chip — calm informational chip, different from alert cards */}
-        {context?.active_event && <EidContextChip context={context} />}
+        {/* Tab content */}
+        <AnimatePresence mode="wait">
+          {activeTab === "alerts" && (
+            <motion.div
+              key="alerts-tab"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.18 }}
+              className="flex flex-col gap-3"
+            >
+              {alerts.length > 0 && <SeverityBar alerts={alerts} />}
 
-        {/* Alert cards */}
-        {alerts.length === 0 ? (
-          <div className="bg-surface border border-default rounded-lg p-6 text-center">
-            <p className="text-body-md text-tertiary">No active alerts</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {alerts.map((alert) => (
-              <AlertCard
-                key={alert.id}
-                alert={alert}
-                hasCase={!!alert.case_id}
-                onOpen={() => handleOpenAlert(alert)}
-                feedStatus={alert.provider ? feedStatuses[alert.provider] : undefined}
-              />
-            ))}
-          </div>
-        )}
+              {alerts.length === 0 ? (
+                <div
+                  className="rounded-xl border border-default p-8 text-center"
+                  style={{ backgroundColor: "var(--bv-surface)" }}
+                >
+                  <p className="text-body-md text-tertiary">No active alerts</p>
+                  <p className="text-body-sm text-tertiary mt-1">
+                    All clear — start the simulation to see alerts
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {alerts.map((alert) => (
+                    <AlertCard
+                      key={alert.id}
+                      alert={alert}
+                      hasCase={!!alert.case_id}
+                      onOpen={() => handleOpenAlert(alert)}
+                      feedStatus={alert.provider ? feedStatuses[alert.provider] : undefined}
+                    />
+                  ))}
+                </div>
+              )}
+            </motion.div>
+          )}
+
+          {activeTab === "cases" && (
+            <motion.div
+              key="cases-tab"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.18 }}
+            >
+              {activeCases.length === 0 ? (
+                <div
+                  className="rounded-xl border border-default p-8 text-center"
+                  style={{ backgroundColor: "var(--bv-surface)" }}
+                >
+                  <p className="text-body-md text-tertiary">No active cases</p>
+                </div>
+              ) : (
+                <ActiveCasesStrip
+                  cases={cases}
+                  alerts={alerts}
+                  onOpenAlert={handleOpenAlert}
+                />
+              )}
+            </motion.div>
+          )}
+
+          {activeTab === "context" && context?.active_event && (
+            <motion.div
+              key="context-tab"
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.18 }}
+            >
+              <EidContextChip context={context} />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </section>
 
       {/* Detail drawer — layered above everything */}

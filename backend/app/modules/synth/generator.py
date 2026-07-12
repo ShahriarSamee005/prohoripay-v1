@@ -183,6 +183,116 @@ def _build_pools(spec: cfg.AgentSpec, net_by_pool: dict[str, int]) -> list[Pool]
     return pools
 
 
+def populate_salary_day(session: Session) -> dict:
+    """Salary-day stress scenario: heavy cash-in drains the bKash provider float.
+
+    In the default Eid scenario, cash_out pressure drains *physical* cash.  Here,
+    cash_in pressure during the salary window drains the *bKash* provider float
+    while physical cash grows — the inverse stress pattern.  The existing forecast
+    engine (unchanged) surfaces bKash as the constraining pool when run against
+    this dataset.
+
+    Uses SALARY_DAY_SEED so the output is fully deterministic.
+    """
+    _sal_day_start = datetime(
+        cfg.SALARY_DAY_REFERENCE_NOW.year,
+        cfg.SALARY_DAY_REFERENCE_NOW.month,
+        cfg.SALARY_DAY_REFERENCE_NOW.day,
+    )
+
+    def _ts_sal(seconds: float) -> datetime:
+        return _sal_day_start + timedelta(seconds=int(seconds))
+
+    rng = np.random.RandomState(cfg.SALARY_DAY_SEED)
+    Faker.seed(cfg.SALARY_DAY_SEED)
+
+    spec = cfg.SALARY_DAY_AGENT
+    sd = cfg.SALARY_DAY_TRAFFIC
+
+    def account() -> str:
+        return f"ACC_{rng.randint(sd.account_id_min, sd.account_id_max)}"
+
+    raw: list[_Txn] = []
+    times = _sorted_times(rng, sd.start_sec, sd.end_sec, sd.count)
+    for t_sec in times:
+        is_cashin = rng.random_sample() < sd.cashin_share
+        if rng.random_sample() < sd.bkash_share:
+            provider = "bkash"
+        else:
+            others = [p for p in spec.providers if p != "bkash"]
+            provider = str(rng.choice(others))
+
+        if is_cashin:
+            txn_type = TxnType.cash_in
+            amount = int(rng.randint(sd.cashin_amount[0], sd.cashin_amount[1]))
+        else:
+            txn_type = TxnType.cash_out
+            amount = int(rng.randint(sd.cashout_amount[0], sd.cashout_amount[1]))
+
+        raw.append(
+            _Txn(
+                ts=_ts_sal(t_sec),
+                provider=provider,
+                txn_type=txn_type,
+                amount=amount,
+                account_id=account(),
+                event_flag="salary_day",
+                is_injected_anomaly=False,
+                anomaly_type=None,
+            )
+        )
+
+    raw.sort(key=lambda t: t.ts)
+
+    net_by_pool: dict[str, int] = {}
+    txn_rows: list[Transaction] = []
+    for i, t in enumerate(raw, start=1):
+        effects = build_pool_effects(TxnType(t.txn_type), Provider(t.provider), t.amount)
+        for eff in effects:
+            net_by_pool[eff["pool_id"]] = net_by_pool.get(eff["pool_id"], 0) + eff["delta"]
+        txn_rows.append(
+            Transaction(
+                id=f"sal_{i:05d}",
+                agent_id=spec.id,
+                ts=t.ts,
+                provider=t.provider,
+                txn_type=t.txn_type,
+                amount=t.amount,
+                status=TxnStatus.completed,
+                account_id=t.account_id,
+                area=spec.area,
+                event_flag=t.event_flag,
+                pool_effects=effects,
+                is_injected_anomaly=False,
+                anomaly_type=None,
+            )
+        )
+
+    agent = Agent(id=spec.id, name=spec.name, area=spec.area, providers=list(spec.providers))
+    pools = _build_pools(spec, net_by_pool)
+
+    session.add(agent)
+    for pool in pools:
+        session.add(pool)
+    for txn in txn_rows:
+        session.add(txn)
+    session.commit()
+
+    bkash_pool = next(p for p in pools if p.pool_id == "bkash")
+    physical_pool = next(p for p in pools if p.pool_id == "physical_cash")
+    return {
+        "scenario": "salary_day",
+        "transactions": len(txn_rows),
+        "bkash_current": bkash_pool.current_balance,
+        "bkash_opening": bkash_pool.opening_balance,
+        "bkash_status": bkash_pool.status.value,
+        "physical_current": physical_pool.current_balance,
+        "physical_status": physical_pool.status.value,
+        "pools": {p.pool_id: {"opening": p.opening_balance, "current": p.current_balance,
+                               "status": p.status.value} for p in pools},
+    }
+
+
 def populate(session: Session) -> dict:
     """Generate and persist the full dataset into `session`. Returns a summary.
 

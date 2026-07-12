@@ -19,11 +19,10 @@ from app.common.meta import Meta
 
 
 class ConfidenceFactors(BaseModel):
-    variance_factor: float
-    sample_factor: float
-    data_freshness: float
-    sample_size: int
-    coefficient_of_variation: float
+    # Named to match the frontend contract in lib/types.ts.
+    volatility: float      # 0–1: share of confidence lost to high variance
+    sample_size: float     # 0–1: normalised sample saturation (not raw count)
+    data_freshness: float  # 0–1: feed freshness modifier
 
 
 class HistoryPoint(BaseModel):
@@ -42,6 +41,7 @@ class ForecastOut(BaseModel):
     recommended_action: str
     evidence: list[str]
     # --- additive fields (Phase 2) ---
+    safety_floor: int
     status: str
     trend: str
     # at_floor | insufficient_data | intermittent | filling | projected

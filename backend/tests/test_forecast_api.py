@@ -31,9 +31,11 @@ def test_forecast_endpoint_shape(client):
         assert f["status"] in {"healthy", "watch", "critical"}
         # Countdown and depletion timestamp are consistently present or absent.
         assert (f["minutes_to_depletion"] is None) == (f["projected_depletion_ts"] is None)
-        # confidence_factors breakdown is exposed.
-        assert {"variance_factor", "sample_factor", "data_freshness", "sample_size"} <= \
+        # confidence_factors breakdown matches the frontend contract names.
+        assert {"volatility", "sample_size", "data_freshness"} <= \
             f["confidence_factors"].keys()
+        # safety_floor is included so the burn-down chart can render a reference line.
+        assert "safety_floor" in f and isinstance(f["safety_floor"], int)
 
 
 def test_soonest_depletion_is_derivable(client):

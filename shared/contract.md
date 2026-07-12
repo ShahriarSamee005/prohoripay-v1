@@ -77,14 +77,40 @@ Every analytics-bearing response includes:
 
 ## Forward-declared (finalized in the noted phase — shapes may refine)
 
-### Phase 2 — Liquidity forecast
-`GET /api/forecast` → `{ "forecasts": [Forecast, ...], "meta": Meta }`
-```json
-{ "pool_id": "bkash", "current_balance": 20000, "burn_rate_per_min": 2000,
-  "minutes_to_depletion": 10, "projected_depletion_ts": "2026-07-11T09:24:00Z",
-  "confidence": 0.92, "recommended_action": "Top up bKash via approved channel",
-  "evidence": ["cash-out rate 2000/min over last 15m", "balance fell 30k→20k in 5m"] }
-```
+## Phase 2 endpoint (final) — Liquidity forecast
+Deterministic per-pool projection. NO LLM. One Forecast per pool (all 4).
+GET /api/forecast → { "forecasts": [Forecast, ...], "meta": Meta }
+{ "pool_id": "bkash",
+  "current_balance": 20000,
+  "safety_floor": 5000,
+  "burn_rate_per_min": 2000,
+  "trend": "accelerating",
+  "projection_state": "projected",   // projected | filling | insufficient_data | intermittent
+  "minutes_to_depletion": 10,
+  "projected_depletion_ts": "2026-07-11T09:24:00Z",
+  "confidence": 0.92,
+  "confidence_factors": { "volatility": "low", "sample_size": 42, "data_freshness": "ok" },
+  "status": "critical",
+  "recommended_action": "Top up bKash via approved channel",
+  "evidence": ["cash-out rate 2000/min over last 15m", "balance fell 30k→20k in 5m"],
+  "history": [ { "ts": "...", "balance": 30000 }, { "ts": "...", "balance": 20000 } ] }
+
+Field rules:
+- burn_rate_per_min = net signed EMA of pool_effects over the recent window (recency-weighted, NOT a
+  flat average). Positive = draining, negative = filling.
+- trend: accelerating | steady | easing | filling. May escalate to "accelerating" ONLY when the
+  consecutive-increase gate passes AND the jump is not dominated by a single transaction.
+- projection_state disambiguates a null countdown: filling = safe (growing); insufficient_data
+  and intermittent = LOW-CONFIDENCE, actively watching (NOT "all clear"); projected = a real
+  countdown is present. minutes_to_depletion is non-null only when projected.
+- minutes_to_depletion / projected_depletion_ts are null unless projection_state == "projected".
+- status derived from minutes_to_depletion (config: <30 critical, <90 watch, else healthy; any
+  non-projected state => not critical by projection). /api/pools reports this SAME status.
+- confidence earned from volatility + sample size + meta.confidence_modifier (freshness). Reduced in
+  insufficient_data / intermittent / degraded-feed states.
+- recommended_action: advisory, provider-respecting, safe language (never "transfer from X").
+- history: short recent balance series for the burn-down chart; projection line runs from the last
+  point to (projected_depletion_ts, safety_floor).
 
 ## Phase 3 endpoint (final) — Anomaly + liquidity alerts
 Alerts come from TWO deterministic sources (no LLM): liquidity alerts derived from Phase-2 forecasts
@@ -147,15 +173,58 @@ Transitions are guarded: illegal moves (e.g. resolve before ack, or acting on a 
 Alert, `case_id` is now populated. Auto-escalation is time-based (see Phase 5 clock); the fields
 (`sla_minutes`, `escalation_level`) are wired now and driven live in Phase 5.
 
-### Phase 5 — Live flow (SSE) + demo controls
-`GET /api/stream` (SSE). Event `type`s: `balance_update` | `alert_new` | `case_update` | `feed_status`.
-Demo controls: `POST /api/sim/eid_rush`, `POST /api/sim/inject_anomaly`, `POST /api/sim/break_feed`
-(each returns `{ "ok": true }` and drives the stream).
+## Phase 5 endpoints (final) — Live flow (SSE) + demo controls
+A simulation clock advances synthetic time in ticks, applies transactions, re-runs forecast +
+detection + escalation, and pushes changes over SSE. Demo controls let the presenter drive scenarios
+live. Still advisory only; controls generate synthetic events, never real actions.
 
-### Phase 6 — Groq explanation
-`POST /api/explain` body `{ "kind": "forecast|alert", "payload": {...}, "lang": "en|bn|banglish" }`
-→ `{ "text": "...", "lang": "bn", "source": "groq|fallback" }`.
+### SSE stream
+`GET /api/stream` (text/event-stream). Each message: `event: <type>` + `data: <json>`.
+Event types and payloads:
+- `tick`          `{ "sim_time": "2026-07-11T09:20:00Z", "tick": 42 }`
+- `balance_update``{ "pools": [Pool, ...], "meta": Meta }`            // same shapes as /api/pools
+- `forecast_update` `{ "forecasts": [Forecast, ...], "meta": Meta }` // same as /api/forecast
+- `alert_new`     `{ "alert": Alert }`                               // a newly raised alert
+- `case_update`   `{ "case": Case }`                                 // created or transitioned
+- `feed_status`   `{ "provider": "bkash", "data_quality": "stale", "confidence_modifier": 0.4 }`
+Client should treat these as authoritative refreshes for the affected slice. On reconnect, client may
+re-fetch REST snapshots then resume the stream.
 
+### Simulation controls (presenter-driven; each returns `{ "ok": true, "applied": "<summary>" }`)
+- `POST /api/sim/start`  body `{ "speed": 1 }`      // begin/resume the clock (speed = ticks/sec)
+- `POST /api/sim/pause`                              // pause the clock
+- `POST /api/sim/reset`                              // reseed to the initial scenario
+- `POST /api/sim/eid_rush`   body `{ "provider": "physical_cash", "intensity": "high" }`
+      // inject sustained cash-out pressure → drives a liquidity alert (Scenario A)
+- `POST /api/sim/inject_anomaly` body `{ "provider": "bkash", "type": "structuring" }`
+      // inject a labeled anomaly cluster → drives an anomaly alert + case
+- `POST /api/sim/break_feed` body `{ "provider": "nagad", "mode": "stale" }`
+      // mark a provider feed stale/late → data_quality degrades, confidence drops (Scenario C)
+- `POST /api/sim/restore_feed` body `{ "provider": "nagad" }`   // clear the degraded state
+
+Degraded feeds MUST propagate: affected forecasts/alerts carry `meta.data_quality != "ok"` and a
+reduced `confidence_modifier`; the sim also emits a `feed_status` event. Auto-escalation
+(`evaluate_escalations`) runs on each tick against sim_time.
+
+## Phase 6 endpoint (final) — Natural-language explanation (Groq)
+The LLM ONLY translates already-computed structured results into human-readable text. It never
+calculates, detects, scores, or decides. Backend loads the AUTHORITATIVE structured object by id
+(not client-supplied numbers), feeds it to Groq under strict constraints, then runs a safety guard;
+on any Groq error/timeout OR a guard failure it returns a deterministic TEMPLATE fallback. Results are
+cached by (kind, id, lang, data-hash) so they're instant and stable during the demo.
+
+POST /api/explain
+body { "kind": "forecast" | "alert", "id": "<pool_id or alert_id>", "lang": "en" | "bn" | "banglish" }
+→
+{ "text": "bKash balance has been falling steadily; at the current cash-out rate it may run low in
+           about 10 minutes. Consider topping up via the approved channel. Human review recommended.",
+  "lang": "en",
+  "source": "groq",            // "groq" | "fallback"
+  "kind": "forecast",
+  "id": "bkash" }
+Constraints the model MUST obey (enforced by prompt + post-check): explain only the provided facts;
+invent no numbers; never the words "fraud"/"suspicious"/"criminal"; advisory, provider-respecting
+language; 2–4 sentences; end with a human-review note for high-impact items. Any violation ⇒ fallback.
 ---
 
 ## Hero framing (UI contract for the main card)

@@ -21,6 +21,8 @@ import type {
   SimControlResponse,
   ExplainRequest,
   ExplainResponse,
+  PatchCashBody,
+  PatchCashResponse,
 } from "./types";
 import {
   getMockAgent,
@@ -202,6 +204,25 @@ export const simBreakFeed = (body: SimBreakFeedBody) =>
 
 export const simRestoreFeed = (body: SimRestoreFeedBody) =>
   simPost("/api/sim/restore_feed", body);
+
+// ─── Physical cash count — human-recorded ────────────────────────────────────
+
+/**
+ * PATCH /api/pools/physical_cash — agent records the actual cash in the drawer.
+ * Advisory only: this records what the human counted; no automatic action.
+ */
+export async function patchPhysicalCash(
+  body: PatchCashBody
+): Promise<PatchCashResponse> {
+  if (USE_MOCK) {
+    return { ok: true, pool_id: "physical_cash", balance: body.balance, note: body.note ?? null };
+  }
+  return request<PatchCashResponse>("/api/pools/physical_cash", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
 
 // ─── Phase 6 — Natural-language explanation ───────────────────────────────────
 

@@ -336,3 +336,16 @@ export interface SimControlResponse {
   ok: boolean;
   applied: string;
 }
+
+/** PATCH /api/pools/physical_cash — human-recorded cash count */
+export interface PatchCashBody {
+  balance: number;
+  note?: string;
+}
+
+export interface PatchCashResponse {
+  ok: boolean;
+  pool_id: string;
+  balance: number;
+  note: string | null;
+}

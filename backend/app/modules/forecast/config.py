@@ -108,12 +108,12 @@ ANALYSIS_WINDOW_MINUTES: int = DEFAULT_CONFIG.analysis_window_minutes
 # Per-pool safety floor (BDT): the operational reserve you never want to cross,
 # NOT zero. Depletion is measured to this floor, not to an empty pool.
 SAFETY_FLOORS: dict[str, int] = {
-    PoolId.physical_cash.value: 20_000,
-    PoolId.bkash.value: 10_000,
-    PoolId.nagad.value: 10_000,
-    PoolId.rocket.value: 10_000,
+    PoolId.physical_cash.value: 10_000,
+    PoolId.bkash.value: 5_000,
+    PoolId.nagad.value: 5_000,
+    PoolId.rocket.value: 5_000,
 }
-DEFAULT_SAFETY_FLOOR: int = 10_000
+DEFAULT_SAFETY_FLOOR: int = 5_000
 
 
 def safety_floor_for(pool_id: str) -> int:
